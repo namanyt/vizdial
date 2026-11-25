@@ -137,6 +137,7 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
     cfg.maxLength = std::clamp(iniFloat(ini, "visual", "max_length", cfg.maxLength), 0.04f, 0.32f);
     cfg.rayWidthPx = std::clamp(iniFloat(ini, "visual", "ray_width_px", cfg.rayWidthPx), 0.8f, 14.0f);
     cfg.ringOpacity = std::clamp(iniFloat(ini, "visual", "ring_opacity", cfg.ringOpacity), 0.0f, 1.0f);
+    cfg.tipGlow = std::clamp(iniFloat(ini, "visual", "tip_glow", cfg.tipGlow), 0.0f, 1.0f);
 
     cfg.colorMode = iniStr(ini, "colors", "mode", cfg.colorMode).trimmed().toLower();
     if (cli.hasFullscreen) cfg.fullscreen = cli.fullscreen;

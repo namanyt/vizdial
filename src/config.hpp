@@ -16,15 +16,16 @@ struct RadialConfig {
     int framerate = 120;
     float dbRange = 44.0f;
     float attackMs = 2.0f;
-    float decayMs = 8.0f;
+    float decayMs = 20.0f;
     float gain = 1.05f;
     float gamma = 0.90f;
 
     int raysPerWing = 128;
     float baseRadius = 0.205f;
     float maxLength = 0.220f;
-    float rayWidthPx = 2.5f;
+    float rayWidthPx = 2.2f;
     float ringOpacity = 0.22f;
+    float tipGlow = 0.75f;
 
     QString colorMode = "auto";
     QColor bgColor = QColor("#131318");

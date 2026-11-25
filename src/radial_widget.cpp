@@ -156,6 +156,7 @@ void RadialWidget::paintGL() {
     if (m_program) {
         m_program->bind();
         m_program->setUniformValue("u_resolution", QVector2D(pw, ph));
+        m_program->setUniformValue("u_dpr", dpr);
         const int bars = std::clamp(m_cfg.raysPerWing, 8, 256);
         m_program->setUniformValue("u_bars", bars);
         m_program->setUniformValueArray("u_bars_left", m_envLeft.data(), bars, 1);
@@ -164,6 +165,7 @@ void RadialWidget::paintGL() {
         m_program->setUniformValue("u_max_len", m_cfg.maxLength);
         m_program->setUniformValue("u_ray_width_px", m_cfg.rayWidthPx);
         m_program->setUniformValue("u_ring_opacity", m_cfg.ringOpacity);
+        m_program->setUniformValue("u_tip_glow", m_cfg.tipGlow);
         m_program->setUniformValue("u_corner_radius", isFullScreen() ? 0.0f : m_cfg.cornerRadius);
         m_program->setUniformValue("u_bg_opacity", m_cfg.bgOpacity);
         m_program->setUniformValue("u_border_opacity", isFullScreen() ? 0.0f : m_cfg.borderOpacity);
