@@ -1,0 +1,10 @@
+/build/
+/pkg/
+/packaging/arch/pkg/
+/packaging/arch/src/
+/packaging/arch/*.tar.*
+/packaging/arch/*.pkg.tar.*
+CMakeUserPresets.json
+.cache/
+*.o
+*.user
