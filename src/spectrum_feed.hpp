@@ -26,6 +26,9 @@ private:
         float tiltGain = 1.0f;
         float highMix = 0.0f;
         int zoneIdx = 0;
+        int blendZone = 0;
+        float blendWeight = 0.0f;
+        float seamMask = 0.0f;
     };
 
     void startAudio(const QString &source);
@@ -74,12 +77,15 @@ private:
     std::vector<float> m_powHigh;
     std::vector<float> m_dbLeft;
     std::vector<float> m_dbRight;
+    std::vector<float> m_normLeft;
+    std::vector<float> m_normRight;
 
     std::vector<LogBand> m_bands;
     int m_bandN = -1;
     int m_bandLowHz = -1;
     int m_bandHighHz = -1;
     float m_bandTilt = -999.0f;
+    float m_bandBlendRays = -1.0f;
     bool m_bandZonesEnabled = true;
     std::array<FreqZone, 5> m_bandZones{};
 

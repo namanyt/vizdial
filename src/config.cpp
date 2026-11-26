@@ -129,6 +129,7 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
     cfg.gamma = std::clamp(iniFloat(ini, "audio", "gamma", cfg.gamma), 0.35f, 2.5f);
 
     cfg.zonesEnabled = iniBool(ini, "zones", "enabled", cfg.zonesEnabled);
+    cfg.zoneBlendRays = std::clamp(iniFloat(ini, "zones", "zone_blend_rays", cfg.zoneBlendRays), 0.0f, 16.0f);
     for (int z = 0; z < 5; ++z) {
         const QString prefix = QString("zone%1_").arg(z + 1);
         FreqZone &fz = cfg.zones[z];
@@ -202,7 +203,7 @@ bool saveRadialConfig(const RadialConfig &cfg) {
     out << "[audio]\nmirror_mode = " << cfg.mirrorMode << "\nsource = " << cfg.source
         << "\nframerate = " << cfg.framerate << "\ndecay_ms = " << QString::number(cfg.decayMs, 'f', 1)
         << "\ngain = " << QString::number(cfg.gain, 'f', 2) << "\n\n";
-    out << "[zones]\nenabled = " << (cfg.zonesEnabled ? "true" : "false") << "\n";
+    out << "[zones]\nenabled = " << (cfg.zonesEnabled ? "true" : "false") << "\nzone_blend_rays = " << QString::number(cfg.zoneBlendRays, 'f', 1) << "\n";
     for (int z = 0; z < 5; ++z) {
         const QString p = QString("zone%1_").arg(z + 1);
         out << p << "min_hz = " << qRound(cfg.zones[z].minHz) << "\n"

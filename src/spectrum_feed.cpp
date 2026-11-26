@@ -118,6 +118,7 @@ void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
         m_bandLowHz == cfg.lowerCutoffHz &&
         m_bandHighHz == cfg.higherCutoffHz &&
         std::abs(m_bandTilt - cfg.tiltDbPerOct) < 1e-3f &&
+        std::abs(m_bandBlendRays - cfg.zoneBlendRays) < 1e-3f &&
         m_bandZonesEnabled == cfg.zonesEnabled &&
         zonesEqual(m_bandZones, cfg.zones)) {
         return;
@@ -127,6 +128,7 @@ void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
     m_bandLowHz = cfg.lowerCutoffHz;
     m_bandHighHz = cfg.higherCutoffHz;
     m_bandTilt = cfg.tiltDbPerOct;
+    m_bandBlendRays = cfg.zoneBlendRays;
     m_bandZonesEnabled = cfg.zonesEnabled;
     m_bandZones = cfg.zones;
 
@@ -134,6 +136,9 @@ void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
     m_bands.reserve(m_bandN);
     m_dbLeft.assign(m_bandN, -120.0f);
     m_dbRight.assign(m_bandN, -120.0f);
+    m_normLeft.assign(m_bandN, 0.0f);
+    m_normRight.assign(m_bandN, 0.0f);
+    auto smoothstep01 = [](float t) { t = std::clamp(t, 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); };
 
     auto pushSlice = [&](float fMin, float fMax, int count, int zoneIdx) {
         const float ratio = std::max(1.01f, fMax / std::max(4.0f, fMin));
@@ -148,6 +153,23 @@ void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
             b.tiltGain = std::pow(10.0f, (cfg.tiltDbPerOct * std::log2(b.fCenter / 250.0f)) / 20.0f);
             b.highMix = std::clamp((b.fCenter - 180.0f) / 160.0f, 0.0f, 1.0f);
             b.zoneIdx = zoneIdx;
+            b.blendZone = zoneIdx;
+            const float wMax = std::min(cfg.zoneBlendRays, 0.45f * static_cast<float>(count));
+            if (cfg.zonesEnabled && wMax > 0.25f) {
+                const float dLeft = static_cast<float>(j) + 0.5f;
+                const float dRight = static_cast<float>(count - 1 - j) + 0.5f;
+                if (dLeft < wMax) {
+                    const float t = 0.5f - 0.5f * (dLeft / wMax);
+                    b.blendZone = (zoneIdx + 4) % 5;
+                    b.blendWeight = smoothstep01(t * 2.0f) * 0.5f;
+                    b.seamMask = std::clamp(b.blendWeight * 2.0f, 0.0f, 1.0f);
+                } else if (dRight < wMax) {
+                    const float t = 0.5f - 0.5f * (dRight / wMax);
+                    b.blendZone = (zoneIdx + 1) % 5;
+                    b.blendWeight = smoothstep01(t * 2.0f) * 0.5f;
+                    b.seamMask = std::clamp(b.blendWeight * 2.0f, 0.0f, 1.0f);
+                }
+            }
             m_bands.push_back(b);
         }
     };
@@ -324,12 +346,34 @@ void SpectrumFeed::computeBands(const RadialConfig &cfg, float dtSec, std::vecto
         const float infl = cfg.zonesEnabled ? std::clamp(cfg.zones[z].influence, 0.0f, 1.0f) : 0.0f;
         zoneTopDb[z] = m_agcPeakDb * (1.0f - infl) + m_zonePeakDb[z] * infl;
     }
+    m_normLeft.resize(n);
+    m_normRight.resize(n);
     const float invRange = 1.0f / std::max(1.0f, cfg.dbRange);
     for (int i = 0; i < n; ++i) {
-        const int z = std::clamp(m_bands[i].zoneIdx, 0, 4);
-        const float zg = cfg.zonesEnabled ? cfg.zones[z].gain : 1.0f;
-        const float botDb = zoneTopDb[z] - cfg.dbRange;
-        outLeft[i] = std::clamp(std::clamp((m_dbLeft[i] - botDb) * invRange, 0.0f, 1.0f) * zg, 0.0f, 1.0f);
-        outRight[i] = std::clamp(std::clamp((m_dbRight[i] - botDb) * invRange, 0.0f, 1.0f) * zg, 0.0f, 1.0f);
+        const LogBand &b = m_bands[i];
+        const int z = std::clamp(b.zoneIdx, 0, 4);
+        const int zb = std::clamp(b.blendZone, 0, 4);
+        const float w = b.blendWeight;
+        const float zg = cfg.zonesEnabled ? (cfg.zones[z].gain * (1.0f - w) + cfg.zones[zb].gain * w) : 1.0f;
+        const float topDb = zoneTopDb[z] * (1.0f - w) + zoneTopDb[zb] * w;
+        const float botDb = topDb - cfg.dbRange;
+        m_normLeft[i] = std::clamp(std::clamp((m_dbLeft[i] - botDb) * invRange, 0.0f, 1.0f) * zg, 0.0f, 1.0f);
+        m_normRight[i] = std::clamp(std::clamp((m_dbRight[i] - botDb) * invRange, 0.0f, 1.0f) * zg, 0.0f, 1.0f);
+    }
+    constexpr float kKer[5] = {0.10f, 0.22f, 0.36f, 0.22f, 0.10f};
+    const int totalRing = 2 * n;
+    for (int i = 0; i < n; ++i) {
+        const float sm = m_bands[i].seamMask * 0.75f;
+        if (sm <= 0.001f) { outLeft[i] = m_normLeft[i]; outRight[i] = m_normRight[i]; continue; }
+        float blurL = 0.0f, blurR = 0.0f;
+        for (int k = -2; k <= 2; ++k) {
+            const float kw = kKer[k + 2];
+            const int uL = (i + k + totalRing) % totalRing;
+            blurL += ((uL < n) ? m_normLeft[uL] : m_normRight[uL - n]) * kw;
+            const int uR = (n + i + k + totalRing) % totalRing;
+            blurR += ((uR < n) ? m_normLeft[uR] : m_normRight[uR - n]) * kw;
+        }
+        outLeft[i] = m_normLeft[i] * (1.0f - sm) + blurL * sm;
+        outRight[i] = m_normRight[i] * (1.0f - sm) + blurR * sm;
     }
 }

@@ -35,6 +35,7 @@ struct RadialConfig {
     float gamma = 0.90f;
 
     bool zonesEnabled = true;
+    float zoneBlendRays = 10.0f;
     std::array<FreqZone, 5> zones{{
         {20.0f, 100.0f, 24.0f, 0.90f, 1.00f},
         {100.0f, 250.0f, 24.0f, 0.45f, 0.55f},
