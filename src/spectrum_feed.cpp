@@ -5,49 +5,147 @@
 #include <cstring>
 
 namespace {
+
 constexpr float kPi = 3.14159265358979323846f;
+
+float integrateBandPower(const std::vector<float> &power, float df, float fLo, float fHi, float fCenter) {
+    const int maxBin = static_cast<int>(power.size()) - 1;
+    const float b0 = std::clamp(fLo / df, 1.0f, static_cast<float>(maxBin - 1));
+    const float b1 = std::clamp(fHi / df, b0 + 1e-4f, static_cast<float>(maxBin));
+    const float width = b1 - b0;
+
+    const int i0 = static_cast<int>(std::floor(b0));
+    const int i1 = static_cast<int>(std::floor(b1));
+
+    if (i0 == i1 || width < 1.0f) {
+        const float bc = std::clamp(fCenter / df, 1.0f, static_cast<float>(maxBin - 1));
+        const int idx = static_cast<int>(std::floor(bc));
+        const float frac = bc - static_cast<float>(idx);
+        const float p = power[idx] * (1.0f - frac) + power[idx + 1] * frac;
+        return std::sqrt(std::max(0.0f, p * width));
+    }
+
+    float sum = (static_cast<float>(i0 + 1) - b0) * power[i0];
+    for (int k = i0 + 1; k < i1 && k < maxBin; ++k) sum += power[k];
+    if (i1 <= maxBin) sum += (b1 - static_cast<float>(i1)) * power[i1];
+    return std::sqrt(std::max(0.0f, sum));
 }
 
-SpectrumFeed::SpectrumFeed()
-    : m_ring(kFftSize, 0.0f),
-      m_snap(kFftSize, 0.0f),
-      m_hann(kFftSize, 0.0f) {
-    double sum = 0.0;
-    for (int i = 0; i < kFftSize; ++i) {
-        const double w = 0.5 * (1.0 - std::cos(2.0 * kPi * i / (kFftSize - 1)));
-        m_hann[i] = static_cast<float>(w);
-        sum += w;
-    }
-    const float norm = static_cast<float>(2.0 / std::max(1.0, sum));
-    for (float &v : m_hann) v *= norm;
+} // namespace
 
-    m_in = fftwf_alloc_real(kFftSize);
-    m_out = fftwf_alloc_complex(kFftSize / 2 + 1);
-    m_plan = fftwf_plan_dft_r2c_1d(kFftSize, m_in, m_out, FFTW_ESTIMATE);
+SpectrumFeed::SpectrumFeed()
+    : m_ringL(kRingSize, 0.0f),
+      m_ringR(kRingSize, 0.0f),
+      m_snapL(kWinLow, 0.0f),
+      m_snapR(kWinLow, 0.0f),
+      m_snapMono(kWinLow, 0.0f),
+      m_hannLow(kWinLow, 0.0f),
+      m_hannHigh(kWinHigh, 0.0f),
+      m_powLow(kFftLow / 2 + 1, 0.0f),
+      m_powHigh(kFftHigh / 2 + 1, 0.0f) {
+    initFft();
 }
 
 SpectrumFeed::~SpectrumFeed() {
     stop();
-    if (m_plan) fftwf_destroy_plan(m_plan);
-    if (m_in) fftwf_free(m_in);
-    if (m_out) fftwf_free(m_out);
+    destroyFft();
+}
+
+void SpectrumFeed::initFft() {
+    double sumLow = 0.0;
+    for (int i = 0; i < kWinLow; ++i) {
+        const double u = static_cast<double>(i) / static_cast<double>(kWinLow - 1);
+        const double s = std::sin(kPi * std::pow(u, 1.8));
+        const double w = s * s;
+        m_hannLow[i] = static_cast<float>(w);
+        sumLow += w;
+    }
+    const float normLow = static_cast<float>(2.0 / std::max(1.0, sumLow));
+    for (float &v : m_hannLow) v *= normLow;
+
+    double sumHigh = 0.0;
+    for (int i = 0; i < kWinHigh; ++i) {
+        const double u = static_cast<double>(i) / static_cast<double>(kWinHigh - 1);
+        const double s = std::sin(kPi * std::pow(u, 1.4));
+        const double w = s * s;
+        m_hannHigh[i] = static_cast<float>(w);
+        sumHigh += w;
+    }
+    const float normHigh = static_cast<float>(2.0 / std::max(1.0, sumHigh));
+    for (float &v : m_hannHigh) v *= normHigh;
+
+    m_inLow = fftwf_alloc_real(kFftLow);
+    m_inHigh = fftwf_alloc_real(kFftHigh);
+    m_outLow = fftwf_alloc_complex(kFftLow / 2 + 1);
+    m_outHigh = fftwf_alloc_complex(kFftHigh / 2 + 1);
+    std::memset(m_inLow, 0, sizeof(float) * kFftLow);
+    std::memset(m_inHigh, 0, sizeof(float) * kFftHigh);
+
+    m_planLow = fftwf_plan_dft_r2c_1d(kFftLow, m_inLow, m_outLow, FFTW_ESTIMATE);
+    m_planHigh = fftwf_plan_dft_r2c_1d(kFftHigh, m_inHigh, m_outHigh, FFTW_ESTIMATE);
+}
+
+void SpectrumFeed::destroyFft() {
+    if (m_planLow) fftwf_destroy_plan(m_planLow);
+    if (m_planHigh) fftwf_destroy_plan(m_planHigh);
+    if (m_inLow) fftwf_free(m_inLow);
+    if (m_inHigh) fftwf_free(m_inHigh);
+    if (m_outLow) fftwf_free(m_outLow);
+    if (m_outHigh) fftwf_free(m_outHigh);
+    m_planLow = nullptr;
+    m_planHigh = nullptr;
+    m_inLow = m_inHigh = nullptr;
+    m_outLow = m_outHigh = nullptr;
 }
 
 void SpectrumFeed::configure(const RadialConfig &cfg) {
+    rebuildBands(cfg);
     if (!m_audioActive || m_source != cfg.source) {
         stop();
         startAudio(cfg.source);
     }
 }
 
+void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
+    if (m_bandN == cfg.raysPerWing &&
+        m_bandLowHz == cfg.lowerCutoffHz &&
+        m_bandHighHz == cfg.higherCutoffHz &&
+        std::abs(m_bandTilt - cfg.tiltDbPerOct) < 1e-3f) {
+        return;
+    }
+
+    m_bandN = cfg.raysPerWing;
+    m_bandLowHz = cfg.lowerCutoffHz;
+    m_bandHighHz = cfg.higherCutoffHz;
+    m_bandTilt = cfg.tiltDbPerOct;
+
+    m_bands.clear();
+    m_bands.reserve(m_bandN);
+    m_dbLeft.assign(m_bandN, -120.0f);
+    m_dbRight.assign(m_bandN, -120.0f);
+
+    const float fMin = static_cast<float>(cfg.lowerCutoffHz);
+    const float ratio = std::max(1.01f, static_cast<float>(cfg.higherCutoffHz) / std::max(4.0f, fMin));
+    for (int j = 0; j < m_bandN; ++j) {
+        const float tC = (static_cast<float>(j) + 0.5f) / static_cast<float>(m_bandN);
+        const float t0 = static_cast<float>(j) / static_cast<float>(m_bandN);
+        const float t1 = static_cast<float>(j + 1) / static_cast<float>(m_bandN);
+        LogBand b;
+        b.fCenter = fMin * std::pow(ratio, tC);
+        b.fLo = fMin * std::pow(ratio, t0);
+        b.fHi = fMin * std::pow(ratio, t1);
+        b.tiltGain = std::pow(10.0f, (cfg.tiltDbPerOct * std::log2(b.fCenter / 250.0f)) / 20.0f);
+        b.highMix = std::clamp((b.fCenter - 180.0f) / 160.0f, 0.0f, 1.0f);
+        m_bands.push_back(b);
+    }
+}
+
 void SpectrumFeed::startAudio(const QString &source) {
     m_source = source;
     m_sourceBytes = m_source.toUtf8();
-
     m_ml = pa_threaded_mainloop_new();
-    if (!m_ml || pa_threaded_mainloop_start(m_ml) < 0) {
-        return;
-    }
+    if (!m_ml || pa_threaded_mainloop_start(m_ml) < 0) return;
+
     pa_threaded_mainloop_lock(m_ml);
     m_ctx = pa_context_new(pa_threaded_mainloop_get_api(m_ml), "vizdial");
     if (m_ctx) {
@@ -110,59 +208,85 @@ void SpectrumFeed::streamReadCb(pa_stream *s, size_t, void *userdata) {
             std::lock_guard<std::mutex> lk(self->m_ringMutex);
             const auto *src = static_cast<const float *>(data);
             for (size_t i = 0; i < frames; ++i) {
-                const float mono = src ? 0.5f * (src[i * 2] + src[i * 2 + 1]) : 0.0f;
-                self->m_ring[self->m_writePos] = mono;
-                self->m_writePos = (self->m_writePos + 1) % kFftSize;
+                self->m_ringL[self->m_writePos] = src ? src[i * 2] : 0.0f;
+                self->m_ringR[self->m_writePos] = src ? src[i * 2 + 1] : 0.0f;
+                self->m_writePos = (self->m_writePos + 1) % kRingSize;
             }
         }
         pa_stream_drop(s);
     }
 }
 
-void SpectrumFeed::evalMono(std::vector<float> &outDb) {
-    size_t wp = 0;
-    {
-        std::lock_guard<std::mutex> lk(m_ringMutex);
-        wp = m_writePos;
-        std::memcpy(m_snap.data(), m_ring.data(), sizeof(float) * kFftSize);
+void SpectrumFeed::evalChannel(const std::vector<float> &samples, size_t startIdx, std::vector<float> &outDb) {
+    for (int i = 0; i < kWinLow; ++i) {
+        m_inLow[i] = samples[(startIdx + static_cast<size_t>(i)) % kRingSize] * m_hannLow[i];
+    }
+    std::memset(m_inLow + kWinLow, 0, sizeof(float) * (kFftLow - kWinLow));
+    fftwf_execute(m_planLow);
+
+    const int nLowBins = kFftLow / 2 + 1;
+    for (int k = 0; k < nLowBins; ++k) {
+        m_powLow[k] = m_outLow[k][0] * m_outLow[k][0] + m_outLow[k][1] * m_outLow[k][1];
     }
 
-    float peakAbs = 0.0f;
-    for (int i = 0; i < kFftSize; ++i) {
-        const float s = m_snap[(wp + i) % kFftSize];
-        peakAbs = std::max(peakAbs, std::abs(s));
-        m_in[i] = s * m_hann[i];
+    const size_t highOffset = (startIdx + static_cast<size_t>(kWinLow - kWinHigh)) % kRingSize;
+    for (int i = 0; i < kWinHigh; ++i) {
+        m_inHigh[i] = samples[(highOffset + static_cast<size_t>(i)) % kRingSize] * m_hannHigh[i];
     }
-    if (peakAbs < 2e-5f) {
-        std::fill(outDb.begin(), outDb.end(), -120.0f);
-        return;
+    std::memset(m_inHigh + kWinHigh, 0, sizeof(float) * (kFftHigh - kWinHigh));
+    fftwf_execute(m_planHigh);
+
+    const int nHighBins = kFftHigh / 2 + 1;
+    for (int k = 0; k < nHighBins; ++k) {
+        m_powHigh[k] = m_outHigh[k][0] * m_outHigh[k][0] + m_outHigh[k][1] * m_outHigh[k][1];
     }
 
-    fftwf_execute(m_plan);
-    const float df = static_cast<float>(kSampleRate) / static_cast<float>(kFftSize);
-    const int maxBin = kFftSize / 2;
-    const int n = static_cast<int>(outDb.size());
-    for (int i = 0; i < n; ++i) {
-        const float f0 = 35.0f + (12000.0f - 35.0f) * (static_cast<float>(i) / std::max(1, n));
-        const float f1 = 35.0f + (12000.0f - 35.0f) * (static_cast<float>(i + 1) / std::max(1, n));
-        const int b0 = std::clamp(static_cast<int>(f0 / df), 1, maxBin);
-        const int b1 = std::clamp(static_cast<int>(f1 / df), b0, maxBin);
-        float sum = 0.0f;
-        for (int k = b0; k <= b1; ++k) {
-            sum += m_out[k][0] * m_out[k][0] + m_out[k][1] * m_out[k][1];
-        }
-        outDb[i] = 20.0f * std::log10(std::sqrt(sum) + 1e-7f);
+    constexpr float dfLow = static_cast<float>(kSampleRate) / static_cast<float>(kFftLow);
+    constexpr float dfHigh = static_cast<float>(kSampleRate) / static_cast<float>(kFftHigh);
+
+    outDb.resize(m_bands.size());
+    for (size_t i = 0; i < m_bands.size(); ++i) {
+        const LogBand &b = m_bands[i];
+        const float rLow = (b.highMix < 0.999f) ? integrateBandPower(m_powLow, dfLow, b.fLo, b.fHi, b.fCenter) : 0.0f;
+        const float rHigh = (b.highMix > 0.001f) ? integrateBandPower(m_powHigh, dfHigh, b.fLo, b.fHi, b.fCenter) : 0.0f;
+        const float rms = (rLow * (1.0f - b.highMix) + rHigh * b.highMix) * b.tiltGain;
+        outDb[i] = 20.0f * std::log10(rms + 1e-7f);
     }
 }
 
 void SpectrumFeed::computeBands(const RadialConfig &cfg, float dtSec, std::vector<float> &outLeft, std::vector<float> &outRight) {
-    const int n = cfg.raysPerWing;
-    m_db.assign(n, -120.0f);
-    evalMono(m_db);
+    rebuildBands(cfg);
+    const int n = static_cast<int>(m_bands.size());
     outLeft.assign(n, 0.0f);
+    outRight.assign(n, 0.0f);
+
+    size_t wp = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_ringMutex);
+        wp = m_writePos;
+        std::memcpy(m_snapL.data(), m_ringL.data(), sizeof(float) * kRingSize);
+        std::memcpy(m_snapR.data(), m_ringR.data(), sizeof(float) * kRingSize);
+    }
+
+    float peakAbs = 0.0f;
+    const size_t checkStart = (wp + kRingSize - kWinHigh) % kRingSize;
+    for (int i = 0; i < kWinHigh; ++i) {
+        const size_t idx = (checkStart + static_cast<size_t>(i)) % kRingSize;
+        peakAbs = std::max(peakAbs, std::max(std::abs(m_snapL[idx]), std::abs(m_snapR[idx])));
+    }
+    if (peakAbs < 2e-5f) return;
+
+    if (cfg.mirrorMode == "stereo") {
+        evalChannel(m_snapL, wp, m_dbLeft);
+        evalChannel(m_snapR, wp, m_dbRight);
+    } else {
+        for (size_t i = 0; i < kRingSize; ++i) m_snapMono[i] = 0.5f * (m_snapL[i] + m_snapR[i]);
+        evalChannel(m_snapMono, wp, m_dbLeft);
+        m_dbRight = m_dbLeft;
+    }
 
     float maxDb = -120.0f;
-    for (float v : m_db) maxDb = std::max(maxDb, v);
+    for (int i = 0; i < n; ++i) maxDb = std::max(maxDb, std::max(m_dbLeft[i], m_dbRight[i]));
     if (maxDb > m_agcPeakDb) {
         m_agcPeakDb += (maxDb - m_agcPeakDb) * (1.0f - std::exp(-dtSec / 0.10f));
     } else if (maxDb > -65.0f) {
@@ -172,7 +296,7 @@ void SpectrumFeed::computeBands(const RadialConfig &cfg, float dtSec, std::vecto
     const float botDb = m_agcPeakDb - cfg.dbRange;
     const float invRange = 1.0f / std::max(1.0f, cfg.dbRange);
     for (int i = 0; i < n; ++i) {
-        outLeft[i] = std::clamp((m_db[i] - botDb) * invRange, 0.0f, 1.0f);
+        outLeft[i] = std::clamp((m_dbLeft[i] - botDb) * invRange, 0.0f, 1.0f);
+        outRight[i] = std::clamp((m_dbRight[i] - botDb) * invRange, 0.0f, 1.0f);
     }
-    outRight = outLeft;
 }

@@ -123,9 +123,14 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
     cfg.bgOpacity = std::clamp(iniFloat(ini, "window", "bg_opacity", cfg.bgOpacity), 0.0f, 1.0f);
     cfg.borderOpacity = std::clamp(iniFloat(ini, "window", "border_opacity", cfg.borderOpacity), 0.0f, 1.0f);
 
+    cfg.mirrorMode = iniStr(ini, "audio", "mirror_mode", cfg.mirrorMode).trimmed().toLower();
+    if (cfg.mirrorMode != "stereo") cfg.mirrorMode = "exact";
     cfg.source = iniStr(ini, "audio", "source", cfg.source).trimmed();
     if (cfg.source.isEmpty()) cfg.source = "auto";
     cfg.framerate = std::clamp(iniInt(ini, "audio", "framerate", cfg.framerate), 30, 240);
+    cfg.lowerCutoffHz = std::clamp(iniInt(ini, "audio", "lower_cutoff_freq", cfg.lowerCutoffHz), 5, 400);
+    cfg.higherCutoffHz = std::clamp(iniInt(ini, "audio", "higher_cutoff_freq", cfg.higherCutoffHz), 2000, 20000);
+    cfg.tiltDbPerOct = std::clamp(iniFloat(ini, "audio", "tilt_db_per_oct", cfg.tiltDbPerOct), -6.0f, 9.0f);
     cfg.dbRange = std::clamp(iniFloat(ini, "audio", "db_range", cfg.dbRange), 18.0f, 72.0f);
     cfg.attackMs = std::clamp(iniFloat(ini, "audio", "attack_ms", cfg.attackMs), 0.5f, 80.0f);
     cfg.decayMs = std::clamp(iniFloat(ini, "audio", "decay_ms", cfg.decayMs), 2.0f, 250.0f);
@@ -144,7 +149,13 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
     if (cli.forceEe) cfg.source = "easyeffects_sink.monitor";
     if (!cli.source.isEmpty()) cfg.source = cli.source;
     if (!cli.colorMode.isEmpty()) cfg.colorMode = cli.colorMode;
+    if (!cli.mirrorMode.isEmpty()) cfg.mirrorMode = cli.mirrorMode;
     if (cli.bars > 0) cfg.raysPerWing = std::clamp(cli.bars, 16, 256);
+    if (cli.lowHz > 0) cfg.lowerCutoffHz = std::clamp(cli.lowHz, 5, 400);
+    if (cli.highHz > 0) cfg.higherCutoffHz = std::clamp(cli.highHz, 2000, 20000);
+    if (cfg.higherCutoffHz <= cfg.lowerCutoffHz * 2) cfg.higherCutoffHz = cfg.lowerCutoffHz * 2;
+    if (cli.decayMs > 0.0f) cfg.decayMs = std::clamp(cli.decayMs, 2.0f, 250.0f);
+    if (cli.gain > 0.0f) cfg.gain = std::clamp(cli.gain, 0.2f, 5.0f);
 
     if (cfg.colorMode == "monochrome") {
         cfg.bgColor = QColor("#111115");

@@ -12,8 +12,12 @@ struct RadialConfig {
     float bgOpacity = 0.45f;
     float borderOpacity = 0.16f;
 
+    QString mirrorMode = "exact";
     QString source = "auto";
     int framerate = 120;
+    int lowerCutoffHz = 20;
+    int higherCutoffHz = 9500;
+    float tiltDbPerOct = 1.5f;
     float dbRange = 44.0f;
     float attackMs = 2.0f;
     float decayMs = 20.0f;
@@ -46,6 +50,11 @@ struct CliOverrides {
     bool forceEe = false;
     bool demo = false;
     int bars = -1;
+    int lowHz = -1;
+    int highHz = -1;
+    float decayMs = -1.0f;
+    float gain = -1.0f;
+    QString mirrorMode;
     QString source;
     QString colorMode;
 };

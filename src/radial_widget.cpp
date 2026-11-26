@@ -123,14 +123,23 @@ void RadialWidget::updateEnvelopes(float dtSec) {
     const float tSec = static_cast<float>(m_clock.elapsed()) * 0.001f;
 
     for (int i = 0; i < n; ++i) {
-        float raw = m_rawLeft[i];
+        float rawL = m_rawLeft[i];
+        float rawR = m_rawRight[i];
         if (m_cli.demo) {
             const float u = static_cast<float>(i) / static_cast<float>(std::max(1, n - 1));
-            raw = std::clamp(0.45f + 0.4f * std::sin(tSec * 4.5f + u * 8.0f), 0.0f, 1.0f);
+            const float kick = std::pow(0.5f + 0.5f * std::sin(tSec * 5.2f), 4.0f);
+            const float raw = std::clamp(
+                std::exp(-std::pow((u - 0.14f) / 0.14f, 2.0f)) * (0.48f + 0.50f * kick) +
+                std::exp(-std::pow((u - 0.50f) / 0.16f, 2.0f)) * (0.38f + 0.28f * std::sin(tSec * 7.5f + u * 11.0f)) +
+                std::exp(-std::pow((u - 0.84f) / 0.14f, 2.0f)) * (0.30f + 0.25f * std::sin(tSec * 13.0f + u * 24.0f)),
+                0.0f, 1.0f);
+            rawL = raw;
+            rawR = raw;
         }
-        const float tgt = std::clamp(std::pow(std::clamp(raw * m_cfg.gain, 0.0f, 1.0f), m_cfg.gamma), 0.0f, 1.0f);
-        m_envLeft[i] += (tgt - m_envLeft[i]) * ((tgt > m_envLeft[i]) ? alphaAtk : alphaDec);
-        m_envRight[i] = m_envLeft[i];
+        const float tgtL = std::clamp(std::pow(std::clamp(rawL * m_cfg.gain, 0.0f, 1.0f), m_cfg.gamma), 0.0f, 1.0f);
+        const float tgtR = std::clamp(std::pow(std::clamp(rawR * m_cfg.gain, 0.0f, 1.0f), m_cfg.gamma), 0.0f, 1.0f);
+        m_envLeft[i] += (tgtL - m_envLeft[i]) * ((tgtL > m_envLeft[i]) ? alphaAtk : alphaDec);
+        m_envRight[i] += (tgtR - m_envRight[i]) * ((tgtR > m_envRight[i]) ? alphaAtk : alphaDec);
     }
 }
 
