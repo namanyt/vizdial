@@ -25,6 +25,7 @@ private:
         float fHi = 0.0f;
         float tiltGain = 1.0f;
         float highMix = 0.0f;
+        int zoneIdx = 0;
     };
 
     void startAudio(const QString &source);
@@ -83,4 +84,5 @@ private:
     std::array<FreqZone, 5> m_bandZones{};
 
     float m_agcPeakDb = -28.0f;
+    std::array<float, 5> m_zonePeakDb{-34.0f, -34.0f, -34.0f, -34.0f, -34.0f};
 };

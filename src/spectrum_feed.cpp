@@ -10,7 +10,7 @@ constexpr float kPi = 3.14159265358979323846f;
 
 bool zonesEqual(const std::array<FreqZone, 5> &a, const std::array<FreqZone, 5> &b) {
     for (size_t i = 0; i < 5; ++i) {
-        if (std::abs(a[i].minHz - b[i].minHz) > 0.1f || std::abs(a[i].maxHz - b[i].maxHz) > 0.1f || std::abs(a[i].share - b[i].share) > 0.01f) return false;
+        if (std::abs(a[i].minHz - b[i].minHz) > 0.1f || std::abs(a[i].maxHz - b[i].maxHz) > 0.1f || std::abs(a[i].share - b[i].share) > 0.01f || std::abs(a[i].gain - b[i].gain) > 0.005f || std::abs(a[i].influence - b[i].influence) > 0.005f) return false;
     }
     return true;
 }
@@ -135,7 +135,7 @@ void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
     m_dbLeft.assign(m_bandN, -120.0f);
     m_dbRight.assign(m_bandN, -120.0f);
 
-    auto pushSlice = [&](float fMin, float fMax, int count) {
+    auto pushSlice = [&](float fMin, float fMax, int count, int zoneIdx) {
         const float ratio = std::max(1.01f, fMax / std::max(4.0f, fMin));
         for (int j = 0; j < count; ++j) {
             const float tC = (static_cast<float>(j) + 0.5f) / static_cast<float>(count);
@@ -147,14 +147,15 @@ void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
             b.fHi = fMin * std::pow(ratio, t1);
             b.tiltGain = std::pow(10.0f, (cfg.tiltDbPerOct * std::log2(b.fCenter / 250.0f)) / 20.0f);
             b.highMix = std::clamp((b.fCenter - 180.0f) / 160.0f, 0.0f, 1.0f);
+            b.zoneIdx = zoneIdx;
             m_bands.push_back(b);
         }
     };
     if (cfg.zonesEnabled) {
         const auto counts = computeZoneRayCounts(cfg);
-        for (int z = 0; z < 5; ++z) pushSlice(cfg.zones[z].minHz, cfg.zones[z].maxHz, counts[z]);
+        for (int z = 0; z < 5; ++z) pushSlice(cfg.zones[z].minHz, cfg.zones[z].maxHz, counts[z], z);
     } else {
-        pushSlice(static_cast<float>(cfg.lowerCutoffHz), static_cast<float>(cfg.higherCutoffHz), m_bandN);
+        pushSlice(static_cast<float>(cfg.lowerCutoffHz), static_cast<float>(cfg.higherCutoffHz), m_bandN, 0);
     }
 }
 
@@ -304,17 +305,31 @@ void SpectrumFeed::computeBands(const RadialConfig &cfg, float dtSec, std::vecto
     }
 
     float maxDb = -120.0f;
-    for (int i = 0; i < n; ++i) maxDb = std::max(maxDb, std::max(m_dbLeft[i], m_dbRight[i]));
-    if (maxDb > m_agcPeakDb) {
-        m_agcPeakDb += (maxDb - m_agcPeakDb) * (1.0f - std::exp(-dtSec / 0.10f));
-    } else if (maxDb > -65.0f) {
-        m_agcPeakDb = std::max(-28.0f, m_agcPeakDb - 1.5f * dtSec);
+    std::array<float, 5> zoneMaxDb{-120.0f, -120.0f, -120.0f, -120.0f, -120.0f};
+    for (int i = 0; i < n; ++i) {
+        const float bMax = std::max(m_dbLeft[i], m_dbRight[i]);
+        maxDb = std::max(maxDb, bMax);
+        const int z = std::clamp(m_bands[i].zoneIdx, 0, 4);
+        zoneMaxDb[z] = std::max(zoneMaxDb[z], bMax);
     }
-
-    const float botDb = m_agcPeakDb - cfg.dbRange;
+    const float rise = 1.0f - std::exp(-dtSec / 0.10f);
+    if (maxDb > m_agcPeakDb) m_agcPeakDb += (maxDb - m_agcPeakDb) * rise;
+    else if (maxDb > -65.0f) m_agcPeakDb = std::max(-28.0f, m_agcPeakDb - 1.5f * dtSec);
+    for (int z = 0; z < 5; ++z) {
+        if (zoneMaxDb[z] > m_zonePeakDb[z]) m_zonePeakDb[z] += (zoneMaxDb[z] - m_zonePeakDb[z]) * rise;
+        else if (zoneMaxDb[z] > -72.0f) m_zonePeakDb[z] = std::max(-36.0f, m_zonePeakDb[z] - 1.5f * dtSec);
+    }
+    std::array<float, 5> zoneTopDb{};
+    for (int z = 0; z < 5; ++z) {
+        const float infl = cfg.zonesEnabled ? std::clamp(cfg.zones[z].influence, 0.0f, 1.0f) : 0.0f;
+        zoneTopDb[z] = m_agcPeakDb * (1.0f - infl) + m_zonePeakDb[z] * infl;
+    }
     const float invRange = 1.0f / std::max(1.0f, cfg.dbRange);
     for (int i = 0; i < n; ++i) {
-        outLeft[i] = std::clamp((m_dbLeft[i] - botDb) * invRange, 0.0f, 1.0f);
-        outRight[i] = std::clamp((m_dbRight[i] - botDb) * invRange, 0.0f, 1.0f);
+        const int z = std::clamp(m_bands[i].zoneIdx, 0, 4);
+        const float zg = cfg.zonesEnabled ? cfg.zones[z].gain : 1.0f;
+        const float botDb = zoneTopDb[z] - cfg.dbRange;
+        outLeft[i] = std::clamp(std::clamp((m_dbLeft[i] - botDb) * invRange, 0.0f, 1.0f) * zg, 0.0f, 1.0f);
+        outRight[i] = std::clamp(std::clamp((m_dbRight[i] - botDb) * invRange, 0.0f, 1.0f) * zg, 0.0f, 1.0f);
     }
 }

@@ -31,15 +31,25 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void enterEvent(QEnterEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 
 private slots:
     void onFrameTick();
+    void reloadAll();
 
 private:
     void applyBlurRegion();
     bool loadShaderProgram();
     void updateEnvelopes(float dtSec);
+    void syncWatcherPaths();
+    void showToast(const QString &text);
+    void saveConfigToDisk();
     void toggleFullscreen();
+    void adjustHeight(float delta);
+    void adjustZoneOrGlobalGain(float delta);
+    void adjustZoneInfluence(float delta);
 
     CliOverrides m_cli;
     RadialConfig m_cfg;
@@ -47,6 +57,8 @@ private:
     QFileSystemWatcher m_watcher;
 
     QTimer m_frameTimer;
+    QTimer m_reloadDebounce;
+    QTimer m_toastTimer;
     QElapsedTimer m_clock;
     qint64 m_lastNs = 0;
 
@@ -59,4 +71,7 @@ private:
     QOpenGLBuffer m_vbo{QOpenGLBuffer::VertexBuffer};
     std::unique_ptr<QOpenGLShaderProgram> m_program;
     QString m_shaderError;
+    bool m_hovered = false;
+    int m_selectedZone = -1;
+    QString m_toastText;
 };

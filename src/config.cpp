@@ -135,6 +135,8 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
         fz.minHz = std::clamp(iniFloat(ini, "zones", prefix + "min_hz", fz.minHz), 5.0f, 18000.0f);
         fz.maxHz = std::clamp(iniFloat(ini, "zones", prefix + "max_hz", fz.maxHz), fz.minHz + 5.0f, 20000.0f);
         fz.share = std::clamp(iniFloat(ini, "zones", prefix + "share", fz.share), 0.0f, 1000.0f);
+        fz.gain = std::clamp(iniFloat(ini, "zones", prefix + "gain", fz.gain), 0.1f, 4.0f);
+        fz.influence = std::clamp(iniFloat(ini, "zones", prefix + "influence", fz.influence), 0.0f, 1.0f);
     }
 
     cfg.raysPerWing = std::clamp(iniInt(ini, "visual", "rays_per_wing", cfg.raysPerWing), 16, 256);
@@ -205,7 +207,9 @@ bool saveRadialConfig(const RadialConfig &cfg) {
         const QString p = QString("zone%1_").arg(z + 1);
         out << p << "min_hz = " << qRound(cfg.zones[z].minHz) << "\n"
             << p << "max_hz = " << qRound(cfg.zones[z].maxHz) << "\n"
-            << p << "share = " << QString::number(cfg.zones[z].share, 'f', 1) << "\n";
+            << p << "share = " << QString::number(cfg.zones[z].share, 'f', 1) << "\n"
+            << p << "gain = " << QString::number(cfg.zones[z].gain, 'f', 2) << "\n"
+            << p << "influence = " << QString::number(cfg.zones[z].influence, 'f', 2) << "\n";
     }
     out << "\n[visual]\nrays_per_wing = " << cfg.raysPerWing
         << "\nmax_length = " << QString::number(cfg.maxLength, 'f', 3) << "\n";

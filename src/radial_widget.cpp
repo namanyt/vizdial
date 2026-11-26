@@ -4,7 +4,12 @@
 #include <QApplication>
 #include <QFile>
 #include <QKeyEvent>
+#include <QDir>
+#include <QFileInfo>
+#include <QFont>
+#include <QFontMetrics>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QWindow>
@@ -43,6 +48,7 @@ RadialWidget::RadialWidget(const CliOverrides &cli, QWidget *parent)
     setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
+    setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
 
@@ -56,6 +62,15 @@ RadialWidget::RadialWidget(const CliOverrides &cli, QWidget *parent)
     if (!m_cli.demo) {
         m_feed.configure(m_cfg);
     }
+    m_reloadDebounce.setSingleShot(true);
+    m_reloadDebounce.setInterval(80);
+    connect(&m_reloadDebounce, &QTimer::timeout, this, &RadialWidget::reloadAll);
+    connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this](const QString &) { syncWatcherPaths(); m_reloadDebounce.start(); });
+    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this](const QString &) { syncWatcherPaths(); m_reloadDebounce.start(); });
+    syncWatcherPaths();
+    m_toastTimer.setSingleShot(true);
+    m_toastTimer.setInterval(1600);
+    connect(&m_toastTimer, &QTimer::timeout, this, [this]() { m_toastText.clear(); update(); });
 
     m_clock.start();
     m_lastNs = m_clock.nsecsElapsed();
@@ -190,6 +205,28 @@ void RadialWidget::paintGL() {
         m_vao.release();
         m_program->release();
     }
+    if (!m_toastText.isEmpty() || !m_shaderError.isEmpty() || (m_hovered && m_cfg.hoverHint)) {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        const QString zoneTag = (m_selectedZone >= 0) ? QString("Z%1 · ").arg(m_selectedZone + 1) : QString();
+        const QString text = !m_shaderError.isEmpty()
+            ? m_shaderError.section('\n', 0, 1)
+            : (!m_toastText.isEmpty()
+                ? m_toastText
+                : QString("%1%2r · h%3% · %4ms | ↑↓ height  1-5 zone  Shift+↑↓ gain  ,/. vol  S save")
+                      .arg(zoneTag).arg(m_cfg.raysPerWing * 2).arg(m_cfg.maxLength * 100.0f, 0, 'f', 1).arg(m_cfg.decayMs, 0, 'f', 0));
+        QFont font("monospace", 8);
+        painter.setFont(font);
+        const QFontMetrics fm(font);
+        const int pillW = std::min(width() - 32, fm.horizontalAdvance(text) + 28);
+        const QRectF pill((width() - pillW) * 0.5, height() - 44.0, pillW, 26);
+        painter.setPen(QPen(QColor(224, 224, 255, 38), 1.0));
+        painter.setBrush(QColor(15, 16, 22, 165));
+        painter.drawRoundedRect(pill, 13.0, 13.0);
+        painter.setPen(!m_shaderError.isEmpty() ? QColor("#ffb4ab") : QColor(228, 225, 233, 225));
+        painter.drawText(pill, Qt::AlignCenter, text);
+        painter.end();
+    }
 }
 
 void RadialWidget::applyBlurRegion() {
@@ -228,20 +265,90 @@ void RadialWidget::toggleFullscreen() {
     applyBlurRegion();
 }
 
-void RadialWidget::keyPressEvent(QKeyEvent *event) {
-    switch (event->key()) {
-    case Qt::Key_Escape:
-    case Qt::Key_Q:
-        qApp->quit();
-        return;
-    case Qt::Key_F:
-    case Qt::Key_F11:
-        toggleFullscreen();
-        return;
-    default:
-        QOpenGLWidget::keyPressEvent(event);
+void RadialWidget::syncWatcherPaths() {
+    for (const QString &d : {QFileInfo(configFilePath()).absolutePath(), QFileInfo(matugenThemePath()).absolutePath()}) {
+        if (QFile::exists(d) && !m_watcher.directories().contains(d)) m_watcher.addPath(d);
+    }
+    for (const QString &p : {configFilePath(), shaderFilePath(), matugenThemePath()}) {
+        if (QFile::exists(p) && !m_watcher.files().contains(p)) m_watcher.addPath(p);
     }
 }
+
+void RadialWidget::reloadAll() {
+    syncWatcherPaths();
+    m_cfg = loadRadialConfig(m_cli);
+    if (!isFullScreen()) resize(m_cfg.width, m_cfg.height);
+    applyBlurRegion();
+    if (!m_cli.demo) m_feed.configure(m_cfg);
+    makeCurrent();
+    loadShaderProgram();
+    doneCurrent();
+    update();
+}
+
+void RadialWidget::showToast(const QString &text) { m_toastText = text; m_toastTimer.start(); update(); }
+void RadialWidget::saveConfigToDisk() { showToast(saveRadialConfig(m_cfg) ? "Saved config" : "Failed saving config"); }
+void RadialWidget::adjustHeight(float delta) {
+    m_cfg.maxLength = std::clamp(m_cfg.maxLength + delta, 0.04f, 0.30f);
+    showToast(QString("Bar height: %1%").arg(m_cfg.maxLength * 100.0f, 0, 'f', 1));
+}
+void RadialWidget::adjustZoneOrGlobalGain(float delta) {
+    if (m_selectedZone >= 0 && m_selectedZone < 5) {
+        FreqZone &fz = m_cfg.zones[m_selectedZone];
+        fz.gain = std::clamp(fz.gain + delta, 0.10f, 4.00f);
+        showToast(QString("Z%1 gain: %2 | vol-track: %3").arg(m_selectedZone + 1).arg(fz.gain, 0, 'f', 2).arg(fz.influence, 0, 'f', 2));
+    } else {
+        m_cfg.gain = std::clamp(m_cfg.gain + delta, 0.20f, 5.00f);
+        showToast(QString("Global gain: %1x").arg(m_cfg.gain, 0, 'f', 2));
+    }
+}
+void RadialWidget::adjustZoneInfluence(float delta) {
+    if (m_selectedZone >= 0 && m_selectedZone < 5) {
+        FreqZone &fz = m_cfg.zones[m_selectedZone];
+        fz.influence = std::clamp(fz.influence + delta, 0.0f, 1.0f);
+        showToast(QString("Z%1 vol-track: %2").arg(m_selectedZone + 1).arg(fz.influence, 0, 'f', 2));
+    } else {
+        float avg = 0.0f;
+        for (int z = 0; z < 5; ++z) {
+            m_cfg.zones[z].influence = std::clamp(m_cfg.zones[z].influence + delta, 0.0f, 1.0f);
+            avg += m_cfg.zones[z].influence;
+        }
+        showToast(QString("All zones vol-track: %1").arg(avg / 5.0f, 0, 'f', 2));
+    }
+}
+
+void RadialWidget::keyPressEvent(QKeyEvent *event) {
+    const bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
+    switch (event->key()) {
+    case Qt::Key_Escape: case Qt::Key_Q: qApp->quit(); return;
+    case Qt::Key_F: case Qt::Key_F11: toggleFullscreen(); return;
+    case Qt::Key_Up: if (shift) adjustZoneOrGlobalGain(0.05f); else adjustHeight(0.015f); return;
+    case Qt::Key_Down: if (shift) adjustZoneOrGlobalGain(-0.05f); else adjustHeight(-0.015f); return;
+    case Qt::Key_Plus: case Qt::Key_Equal: adjustHeight(0.015f); return;
+    case Qt::Key_Minus: adjustHeight(-0.015f); return;
+    case Qt::Key_1: case Qt::Key_2: case Qt::Key_3: case Qt::Key_4: case Qt::Key_5:
+        m_selectedZone = event->key() - Qt::Key_1;
+        showToast(QString("Z%1 (%2-%3Hz) gain %4").arg(m_selectedZone + 1).arg(qRound(m_cfg.zones[m_selectedZone].minHz)).arg(qRound(m_cfg.zones[m_selectedZone].maxHz)).arg(m_cfg.zones[m_selectedZone].gain, 0, 'f', 2));
+        return;
+    case Qt::Key_0: m_selectedZone = -1; showToast("All zones deselected"); return;
+    case Qt::Key_Comma: case Qt::Key_Less: adjustZoneInfluence(-0.10f); return;
+    case Qt::Key_Period: case Qt::Key_Greater: adjustZoneInfluence(0.10f); return;
+    case Qt::Key_BracketRight: m_cfg.decayMs = std::clamp(m_cfg.decayMs + 1.0f, 2.0f, 100.0f); showToast(QString("Decay: %1 ms").arg(m_cfg.decayMs, 0, 'f', 0)); return;
+    case Qt::Key_BracketLeft: m_cfg.decayMs = std::clamp(m_cfg.decayMs - 1.0f, 2.0f, 100.0f); showToast(QString("Decay: %1 ms").arg(m_cfg.decayMs, 0, 'f', 0)); return;
+    case Qt::Key_Right: m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing + 8, 24, 200); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
+    case Qt::Key_Left: m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing - 8, 24, 200); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
+    case Qt::Key_M: m_cfg.mirrorMode = (m_cfg.mirrorMode == "exact") ? "stereo" : "exact"; if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Wing mirror: %1").arg(m_cfg.mirrorMode)); return;
+    case Qt::Key_C: m_cli.colorMode = (m_cfg.colorMode == "monochrome") ? "auto" : "monochrome"; reloadAll(); return;
+    case Qt::Key_Z: showToast(formatZonesSummary(m_cfg)); return;
+    case Qt::Key_S: saveConfigToDisk(); return;
+    case Qt::Key_R: m_cli.colorMode.clear(); reloadAll(); showToast("Reloaded config & shader"); return;
+    default: QOpenGLWidget::keyPressEvent(event);
+    }
+}
+
+void RadialWidget::wheelEvent(QWheelEvent *event) { if (event->angleDelta().y() != 0) adjustHeight(event->angleDelta().y() > 0 ? 0.010f : -0.010f); }
+void RadialWidget::enterEvent(QEnterEvent *event) { QOpenGLWidget::enterEvent(event); m_hovered = true; update(); }
+void RadialWidget::leaveEvent(QEvent *event) { QOpenGLWidget::leaveEvent(event); m_hovered = false; update(); }
 
 void RadialWidget::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton && !isFullScreen() && windowHandle()) {
