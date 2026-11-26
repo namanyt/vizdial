@@ -3,6 +3,7 @@
 #include "config.hpp"
 
 #include <QByteArray>
+#include <array>
 #include <fftw3.h>
 #include <mutex>
 #include <pulse/pulseaudio.h>
@@ -78,6 +79,8 @@ private:
     int m_bandLowHz = -1;
     int m_bandHighHz = -1;
     float m_bandTilt = -999.0f;
+    bool m_bandZonesEnabled = true;
+    std::array<FreqZone, 5> m_bandZones{};
 
     float m_agcPeakDb = -28.0f;
 };

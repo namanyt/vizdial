@@ -8,6 +8,13 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
+bool zonesEqual(const std::array<FreqZone, 5> &a, const std::array<FreqZone, 5> &b) {
+    for (size_t i = 0; i < 5; ++i) {
+        if (std::abs(a[i].minHz - b[i].minHz) > 0.1f || std::abs(a[i].maxHz - b[i].maxHz) > 0.1f || std::abs(a[i].share - b[i].share) > 0.01f) return false;
+    }
+    return true;
+}
+
 float integrateBandPower(const std::vector<float> &power, float df, float fLo, float fHi, float fCenter) {
     const int maxBin = static_cast<int>(power.size()) - 1;
     const float b0 = std::clamp(fLo / df, 1.0f, static_cast<float>(maxBin - 1));
@@ -110,7 +117,9 @@ void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
     if (m_bandN == cfg.raysPerWing &&
         m_bandLowHz == cfg.lowerCutoffHz &&
         m_bandHighHz == cfg.higherCutoffHz &&
-        std::abs(m_bandTilt - cfg.tiltDbPerOct) < 1e-3f) {
+        std::abs(m_bandTilt - cfg.tiltDbPerOct) < 1e-3f &&
+        m_bandZonesEnabled == cfg.zonesEnabled &&
+        zonesEqual(m_bandZones, cfg.zones)) {
         return;
     }
 
@@ -118,25 +127,34 @@ void SpectrumFeed::rebuildBands(const RadialConfig &cfg) {
     m_bandLowHz = cfg.lowerCutoffHz;
     m_bandHighHz = cfg.higherCutoffHz;
     m_bandTilt = cfg.tiltDbPerOct;
+    m_bandZonesEnabled = cfg.zonesEnabled;
+    m_bandZones = cfg.zones;
 
     m_bands.clear();
     m_bands.reserve(m_bandN);
     m_dbLeft.assign(m_bandN, -120.0f);
     m_dbRight.assign(m_bandN, -120.0f);
 
-    const float fMin = static_cast<float>(cfg.lowerCutoffHz);
-    const float ratio = std::max(1.01f, static_cast<float>(cfg.higherCutoffHz) / std::max(4.0f, fMin));
-    for (int j = 0; j < m_bandN; ++j) {
-        const float tC = (static_cast<float>(j) + 0.5f) / static_cast<float>(m_bandN);
-        const float t0 = static_cast<float>(j) / static_cast<float>(m_bandN);
-        const float t1 = static_cast<float>(j + 1) / static_cast<float>(m_bandN);
-        LogBand b;
-        b.fCenter = fMin * std::pow(ratio, tC);
-        b.fLo = fMin * std::pow(ratio, t0);
-        b.fHi = fMin * std::pow(ratio, t1);
-        b.tiltGain = std::pow(10.0f, (cfg.tiltDbPerOct * std::log2(b.fCenter / 250.0f)) / 20.0f);
-        b.highMix = std::clamp((b.fCenter - 180.0f) / 160.0f, 0.0f, 1.0f);
-        m_bands.push_back(b);
+    auto pushSlice = [&](float fMin, float fMax, int count) {
+        const float ratio = std::max(1.01f, fMax / std::max(4.0f, fMin));
+        for (int j = 0; j < count; ++j) {
+            const float tC = (static_cast<float>(j) + 0.5f) / static_cast<float>(count);
+            const float t0 = static_cast<float>(j) / static_cast<float>(count);
+            const float t1 = static_cast<float>(j + 1) / static_cast<float>(count);
+            LogBand b;
+            b.fCenter = fMin * std::pow(ratio, tC);
+            b.fLo = fMin * std::pow(ratio, t0);
+            b.fHi = fMin * std::pow(ratio, t1);
+            b.tiltGain = std::pow(10.0f, (cfg.tiltDbPerOct * std::log2(b.fCenter / 250.0f)) / 20.0f);
+            b.highMix = std::clamp((b.fCenter - 180.0f) / 160.0f, 0.0f, 1.0f);
+            m_bands.push_back(b);
+        }
+    };
+    if (cfg.zonesEnabled) {
+        const auto counts = computeZoneRayCounts(cfg);
+        for (int z = 0; z < 5; ++z) pushSlice(cfg.zones[z].minHz, cfg.zones[z].maxHz, counts[z]);
+    } else {
+        pushSlice(static_cast<float>(cfg.lowerCutoffHz), static_cast<float>(cfg.higherCutoffHz), m_bandN);
     }
 }
 

@@ -23,11 +23,23 @@ int main(int argc, char *argv[]) {
             cli.forceEe = true;
         } else if (a == "--demo") {
             cli.demo = true;
+        } else if (a == "--zones") {
+            cli.printZones = true;
         } else if (a == "--bars" && i + 1 < argc) {
             cli.bars = QString::fromLocal8Bit(argv[++i]).toInt();
         } else if (a == "--source" && i + 1 < argc) {
             cli.source = QString::fromLocal8Bit(argv[++i]);
         }
+    }
+
+    if (cli.printZones) {
+        const RadialConfig cfg = loadRadialConfig(cli);
+        const auto counts = computeZoneRayCounts(cfg);
+        std::cout << "Total rays/wing: " << cfg.raysPerWing << " (" << (cfg.raysPerWing * 2) << " total)\n";
+        for (int z = 0; z < 5; ++z) {
+            std::cout << "  Zone " << (z + 1) << ": " << cfg.zones[z].minHz << "-" << cfg.zones[z].maxHz << " Hz | rays=" << counts[z] << "\n";
+        }
+        return 0;
     }
 
     QSurfaceFormat fmt;
