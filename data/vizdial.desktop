@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Vizdial
+Comment=Frosted radial 5-zone OpenGL audio visualizer
+Exec=vizdial
+Icon=vizdial
+Terminal=false
+Categories=AudioVideo;Audio;Qt;
+Keywords=audio;visualizer;spectrum;fft;pipewire;radial;

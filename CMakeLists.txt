@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(vizdial VERSION 0.1.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -39,3 +41,19 @@ target_compile_options(vizdial PRIVATE -Wall -Wextra)
 if(NOT CMAKE_BUILD_TYPE)
     target_compile_options(vizdial PRIVATE -O2)
 endif()
+
+install(TARGETS vizdial
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(FILES shaders/radial.frag config/config.ini
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/vizdial
+)
+install(FILES data/vizdial.desktop
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+)
+install(FILES data/vizdial.svg
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+)
+install(FILES LICENSE
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/vizdial
+)
