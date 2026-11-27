@@ -25,7 +25,7 @@ optdepends=(
   'cava: automatic Matugen Cava theme sync'
 )
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('ba0e008ef5ded5e71bbbec1d6a628f9a6a90c87126adda1e1398213c71ab0e0a')
 
 build() {
   cmake -B build -S "${pkgname}-${pkgver}" \
