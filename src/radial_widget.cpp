@@ -1,12 +1,15 @@
 #include "radial_widget.hpp"
 
+#ifdef HAVE_KF6_WINDOW_SYSTEM
 #include <KWindowEffects>
+#endif
 #include <QApplication>
 #include <QFile>
 #include <QKeyEvent>
 #include <QDir>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -110,9 +113,10 @@ void RadialWidget::initializeGL() {
 void RadialWidget::resizeGL(int, int) {}
 
 bool RadialWidget::loadShaderProgram() {
-    QFile f(shaderFilePath());
+    const QString sPath = resolveShaderPath();
+    QFile f(sPath);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        m_shaderError = "Cannot open shader: " + shaderFilePath();
+        m_shaderError = "Cannot open shader: " + sPath;
         return false;
     }
     auto next = std::make_unique<QOpenGLShaderProgram>();
@@ -229,7 +233,8 @@ void RadialWidget::paintGL() {
                 ? m_toastText
                 : QString("%1%2r · h%3% · %4ms | ↑↓ height  1-5 zone  Shift+↑↓ gain  ,/. vol  S save")
                       .arg(zoneTag).arg(m_cfg.raysPerWing * 2).arg(m_cfg.maxLength * 100.0f, 0, 'f', 1).arg(m_cfg.decayMs, 0, 'f', 0));
-        QFont font("monospace", 8);
+        QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        font.setPointSize(8);
         painter.setFont(font);
         const QFontMetrics fm(font);
         const int pillW = std::min(width() - 32, fm.horizontalAdvance(text) + 28);
@@ -244,6 +249,7 @@ void RadialWidget::paintGL() {
 }
 
 void RadialWidget::applyBlurRegion() {
+#ifdef HAVE_KF6_WINDOW_SYSTEM
     if (!windowHandle()) return;
     QRegion reg;
     const int w = width();
@@ -273,6 +279,7 @@ void RadialWidget::applyBlurRegion() {
     }
     KWindowEffects::enableBlurBehind(windowHandle(), true, reg);
     KWindowEffects::enableBackgroundContrast(windowHandle(), true, 1.06, 1.0, 1.12, reg);
+#endif
 }
 
 void RadialWidget::showEvent(QShowEvent *event) {
@@ -297,11 +304,11 @@ void RadialWidget::toggleFullscreen() {
 }
 
 void RadialWidget::syncWatcherPaths() {
-    for (const QString &d : {QFileInfo(configFilePath()).absolutePath(), QFileInfo(matugenThemePath()).absolutePath()}) {
-        if (QFile::exists(d) && !m_watcher.directories().contains(d)) m_watcher.addPath(d);
+    for (const QString &d : {configDirPath(), QFileInfo(matugenThemePath()).absolutePath()}) {
+        if (!d.isEmpty() && QFile::exists(d) && !m_watcher.directories().contains(d)) m_watcher.addPath(d);
     }
-    for (const QString &p : {configFilePath(), shaderFilePath(), matugenThemePath()}) {
-        if (QFile::exists(p) && !m_watcher.files().contains(p)) m_watcher.addPath(p);
+    for (const QString &p : {configFilePath(), userShaderFilePath(), matugenThemePath(), kdeGlobalsPath()}) {
+        if (!p.isEmpty() && QFile::exists(p) && !m_watcher.files().contains(p)) m_watcher.addPath(p);
     }
 }
 
@@ -318,7 +325,7 @@ void RadialWidget::reloadAll() {
 }
 
 void RadialWidget::showToast(const QString &text) { m_toastText = text; m_toastTimer.start(); update(); }
-void RadialWidget::saveConfigToDisk() { showToast(saveRadialConfig(m_cfg) ? "Saved config" : "Failed saving config"); }
+void RadialWidget::saveConfigToDisk() { showToast(saveRadialConfig(m_cfg) ? ("Saved to " + configFilePath()) : "Failed saving config"); }
 void RadialWidget::adjustHeight(float delta) {
     m_cfg.maxLength = std::clamp(m_cfg.maxLength + delta, 0.04f, 0.30f);
     showToast(QString("Bar height: %1%").arg(m_cfg.maxLength * 100.0f, 0, 'f', 1));

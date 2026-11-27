@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/">
+    <file>shaders/radial.frag</file>
+    <file>config/config.ini</file>
+  </qresource>
+</RCC>

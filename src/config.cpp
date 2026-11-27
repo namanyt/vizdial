@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QTextStream>
 #include <algorithm>
@@ -12,12 +13,25 @@
 
 namespace {
 
-QColor parseHex(const QString &raw, const QColor &fallback) {
+QColor parseColorAny(const QString &raw, const QColor &fallback) {
     QString s = raw.trimmed();
     s.remove('\'').remove('"');
-    if (!s.startsWith('#')) return fallback;
-    QColor c(s);
-    return c.isValid() ? c : fallback;
+    if (s.isEmpty()) return fallback;
+    if (s.startsWith('#')) {
+        QColor c(s);
+        return c.isValid() ? c : fallback;
+    }
+    const QStringList rgb = s.split(',', Qt::SkipEmptyParts);
+    if (rgb.size() >= 3) {
+        bool okR = false, okG = false, okB = false;
+        const int r = rgb[0].trimmed().toInt(&okR);
+        const int g = rgb[1].trimmed().toInt(&okG);
+        const int b = rgb[2].trimmed().toInt(&okB);
+        if (okR && okG && okB) {
+            return QColor(std::clamp(r, 0, 255), std::clamp(g, 0, 255), std::clamp(b, 0, 255));
+        }
+    }
+    return fallback;
 }
 
 QColor mixColors(const QColor &a, const QColor &b, float t) {
@@ -34,18 +48,24 @@ using IniMap = std::map<QString, std::map<QString, QString>>;
 IniMap readIniRaw(const QString &path) {
     IniMap out;
     QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return out;
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return out;
+    }
     QTextStream in(&f);
     QString section;
     while (!in.atEnd()) {
         const QString line = in.readLine().trimmed();
-        if (line.isEmpty() || line.startsWith('#') || line.startsWith(';')) continue;
+        if (line.isEmpty() || line.startsWith('#') || line.startsWith(';') || line.startsWith("%23")) {
+            continue;
+        }
         if (line.startsWith('[') && line.endsWith(']')) {
             section = line.mid(1, line.size() - 2).trimmed();
             continue;
         }
         const int eq = line.indexOf('=');
-        if (eq > 0) out[section][line.left(eq).trimmed()] = line.mid(eq + 1).trimmed();
+        if (eq > 0) {
+            out[section][line.left(eq).trimmed()] = line.mid(eq + 1).trimmed();
+        }
     }
     return out;
 }
@@ -76,19 +96,33 @@ bool iniBool(const IniMap &m, const QString &sec, const QString &key, bool def) 
     return def;
 }
 
-QColor readIniKeyColor(const QString &path, const QString &sectionName, const QString &key, const QColor &fallback) {
-    const IniMap m = readIniRaw(path);
+QColor readIniKeyColor(const IniMap &m, const QString &sectionName, const QString &key, const QColor &fallback) {
     const QString raw = iniStr(m, sectionName, key, "");
-    return raw.isEmpty() ? fallback : parseHex(raw, fallback);
+    return raw.isEmpty() ? fallback : parseColorAny(raw, fallback);
 }
 
 void applyAutoTheme(RadialConfig &cfg) {
-    const QColor kdeBg = readIniKeyColor(kdeGlobalsPath(), "Colors:Complementary", "BackgroundNormal", QColor("#131318"));
+    const IniMap kdeIni = readIniRaw(kdeGlobalsPath());
+    const QColor kdeBg = readIniKeyColor(kdeIni, "Colors:Complementary", "BackgroundNormal", QColor("#131318"));
     cfg.bgColor = kdeBg.isValid() ? kdeBg : QColor("#131318");
+
+    QColor accent("#bfc2ff");
+    accent = readIniKeyColor(kdeIni, "Colors:Complementary", "DecorationFocus", accent);
+    accent = readIniKeyColor(kdeIni, "General", "LastUsedCustomAccentColor", accent);
+    accent = readIniKeyColor(kdeIni, "General", "AccentColor", accent);
+
+    QColor g1 = mixColors(accent, QColor("#202446"), 0.55f);
+    QColor g2 = accent;
+    QColor g3 = mixColors(accent, QColor("#ffffff"), 0.35f);
+
     const QString mPath = matugenThemePath();
-    const QColor g1 = readIniKeyColor(mPath, "color", "gradient_color_1", QColor("#5c63b8"));
-    const QColor g2 = readIniKeyColor(mPath, "color", "gradient_color_2", QColor("#bfc2ff"));
-    const QColor g3 = readIniKeyColor(mPath, "color", "gradient_color_3", QColor("#e0e0ff"));
+    if (!mPath.isEmpty() && QFile::exists(mPath)) {
+        const IniMap mIni = readIniRaw(mPath);
+        g1 = readIniKeyColor(mIni, "color", "gradient_color_1", g1);
+        g2 = readIniKeyColor(mIni, "color", "gradient_color_2", g2);
+        g3 = readIniKeyColor(mIni, "color", "gradient_color_3", g3);
+    }
+
     cfg.borderColor = g2;
     cfg.ringColor = g2;
     cfg.rayInnerColor = mixColors(g1, g2, 0.50f);
@@ -98,12 +132,62 @@ void applyAutoTheme(RadialConfig &cfg) {
 
 } // namespace
 
-QString configFilePath() { return QDir::homePath() + "/.config/vizdial/config.ini"; }
-QString shaderFilePath() { return QDir::homePath() + "/.config/vizdial/radial.frag"; }
-QString matugenThemePath() { return QDir::homePath() + "/.config/cava/themes/matugen"; }
-QString kdeGlobalsPath() { return QDir::homePath() + "/.config/kdeglobals"; }
+QString configDirPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/vizdial";
+}
+
+QString configFilePath() {
+    return configDirPath() + "/config.ini";
+}
+
+QString userShaderFilePath() {
+    return configDirPath() + "/radial.frag";
+}
+
+QString resolveShaderPath() {
+    const QString userShader = userShaderFilePath();
+    if (QFile::exists(userShader)) {
+        return userShader;
+    }
+    const QString sysShader = QStandardPaths::locate(QStandardPaths::GenericDataLocation, "vizdial/radial.frag");
+    if (!sysShader.isEmpty()) {
+        return sysShader;
+    }
+    return QStringLiteral(":/shaders/radial.frag");
+}
+
+QString matugenThemePath() {
+    return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/cava/themes/matugen";
+}
+
+QString kdeGlobalsPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/kdeglobals";
+}
+
+void ensureDefaultConfigExists() {
+    const QString dst = configFilePath();
+    if (QFile::exists(dst)) {
+        return;
+    }
+    QDir().mkpath(configDirPath());
+    QString src = QStandardPaths::locate(QStandardPaths::GenericDataLocation, "vizdial/config.ini");
+    if (src.isEmpty()) {
+        src = QStringLiteral(":/config/config.ini");
+    }
+    QFile in(src);
+    if (!in.open(QIODevice::ReadOnly)) {
+        return;
+    }
+    QSaveFile out(dst);
+    if (out.open(QIODevice::WriteOnly)) {
+        out.write(in.readAll());
+        out.commit();
+    }
+}
 
 RadialConfig loadRadialConfig(const CliOverrides &cli) {
+    ensureDefaultConfigExists();
+
     RadialConfig cfg;
     const IniMap ini = readIniRaw(configFilePath());
 
@@ -150,12 +234,12 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
     cfg.tipGlow = std::clamp(iniFloat(ini, "visual", "tip_glow", cfg.tipGlow), 0.0f, 1.0f);
 
     cfg.colorMode = iniStr(ini, "colors", "mode", cfg.colorMode).trimmed().toLower();
-    cfg.bgColor = parseHex(iniStr(ini, "colors", "bg_color", "#131318"), cfg.bgColor);
-    cfg.borderColor = parseHex(iniStr(ini, "colors", "border_color", "#bfc2ff"), cfg.borderColor);
-    cfg.ringColor = parseHex(iniStr(ini, "colors", "ring_color", "#bfc2ff"), cfg.ringColor);
-    cfg.rayInnerColor = parseHex(iniStr(ini, "colors", "ray_inner_color", "#858ae3"), cfg.rayInnerColor);
-    cfg.rayMidColor = parseHex(iniStr(ini, "colors", "ray_mid_color", "#bfc2ff"), cfg.rayMidColor);
-    cfg.rayOuterColor = parseHex(iniStr(ini, "colors", "ray_outer_color", "#f2f2ff"), cfg.rayOuterColor);
+    cfg.bgColor = parseColorAny(iniStr(ini, "colors", "bg_color", "#131318"), cfg.bgColor);
+    cfg.borderColor = parseColorAny(iniStr(ini, "colors", "border_color", "#bfc2ff"), cfg.borderColor);
+    cfg.ringColor = parseColorAny(iniStr(ini, "colors", "ring_color", "#bfc2ff"), cfg.ringColor);
+    cfg.rayInnerColor = parseColorAny(iniStr(ini, "colors", "ray_inner_color", "#858ae3"), cfg.rayInnerColor);
+    cfg.rayMidColor = parseColorAny(iniStr(ini, "colors", "ray_mid_color", "#bfc2ff"), cfg.rayMidColor);
+    cfg.rayOuterColor = parseColorAny(iniStr(ini, "colors", "ray_outer_color", "#f2f2ff"), cfg.rayOuterColor);
 
     if (cli.hasFullscreen) cfg.fullscreen = cli.fullscreen;
     if (cli.forceEe) cfg.source = "easyeffects_sink.monitor";
@@ -166,10 +250,16 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
     if (cli.lowHz > 0) {
         cfg.lowerCutoffHz = std::clamp(cli.lowHz, 5, 400);
         cfg.zones[0].minHz = static_cast<float>(cfg.lowerCutoffHz);
+        if (cfg.zones[0].maxHz <= cfg.zones[0].minHz + 5.0f) {
+            cfg.zones[0].maxHz = cfg.zones[0].minHz + 10.0f;
+        }
     }
     if (cli.highHz > 0) {
         cfg.higherCutoffHz = std::clamp(cli.highHz, 2000, 20000);
         cfg.zones[4].maxHz = static_cast<float>(cfg.higherCutoffHz);
+        if (cfg.zones[4].maxHz <= cfg.zones[4].minHz + 100.0f) {
+            cfg.zones[4].minHz = std::max(500.0f, cfg.zones[4].maxHz * 0.5f);
+        }
     }
     if (cfg.higherCutoffHz <= cfg.lowerCutoffHz * 2) cfg.higherCutoffHz = cfg.lowerCutoffHz * 2;
     if (cli.decayMs > 0.0f) cfg.decayMs = std::clamp(cli.decayMs, 2.0f, 250.0f);
@@ -195,29 +285,75 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
 bool saveRadialConfig(const RadialConfig &cfg) {
     QDir().mkpath(QFileInfo(configFilePath()).absolutePath());
     QSaveFile file(configFilePath());
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
+    }
 
     QTextStream out(&file);
-    out << "[window]\nwidth = " << cfg.width << "\nheight = " << cfg.height
-        << "\ncorner_radius = " << QString::number(cfg.cornerRadius, 'f', 1)
-        << "\nbg_opacity = " << QString::number(cfg.bgOpacity, 'f', 2)
-        << "\nborder_opacity = " << QString::number(cfg.borderOpacity, 'f', 2)
-        << "\nhover_hint = " << (cfg.hoverHint ? "true" : "false") << "\n\n";
-    out << "[audio]\nmirror_mode = " << cfg.mirrorMode << "\nsource = " << cfg.source
-        << "\nframerate = " << cfg.framerate << "\ndecay_ms = " << QString::number(cfg.decayMs, 'f', 1)
-        << "\ngain = " << QString::number(cfg.gain, 'f', 2) << "\n\n";
-    out << "[zones]\nenabled = " << (cfg.zonesEnabled ? "true" : "false") << "\nzone_blend_rays = " << QString::number(cfg.zoneBlendRays, 'f', 1) << "\n";
+    out << "# Vizdial configuration (hot-reloads automatically on save)\n\n";
+    out << "[window]\n"
+        << "width = " << cfg.width << "\n"
+        << "height = " << cfg.height << "\n"
+        << "corner_radius = " << QString::number(cfg.cornerRadius, 'f', 1) << "\n"
+        << "bg_opacity = " << QString::number(cfg.bgOpacity, 'f', 2) << "\n"
+        << "border_opacity = " << QString::number(cfg.borderOpacity, 'f', 2) << "\n"
+        << "hover_hint = " << (cfg.hoverHint ? "true" : "false") << "\n\n";
+
+    out << "[audio]\n"
+        << "mirror_mode = " << cfg.mirrorMode << "\n"
+        << "source = " << cfg.source << "\n"
+        << "framerate = " << cfg.framerate << "\n"
+        << "lower_cutoff_freq = " << cfg.lowerCutoffHz << "\n"
+        << "higher_cutoff_freq = " << cfg.higherCutoffHz << "\n"
+        << "tilt_db_per_oct = " << QString::number(cfg.tiltDbPerOct, 'f', 2) << "\n"
+        << "db_range = " << QString::number(cfg.dbRange, 'f', 1) << "\n"
+        << "attack_ms = " << QString::number(cfg.attackMs, 'f', 1) << "\n"
+        << "decay_ms = " << QString::number(cfg.decayMs, 'f', 1) << "\n"
+        << "gain = " << QString::number(cfg.gain, 'f', 2) << "\n"
+        << "gamma = " << QString::number(cfg.gamma, 'f', 2) << "\n"
+        << "sensitivity = " << QString::number(cfg.sensitivity, 'f', 2) << "\n\n";
+
+    out << "[zones]\n"
+        << "enabled = " << (cfg.zonesEnabled ? "true" : "false") << "\n"
+        << "zone_blend_rays = " << QString::number(cfg.zoneBlendRays, 'f', 1) << "\n";
+    static const char *kZoneComments[5] = {
+        "# Zone 1: Sub-bass",
+        "# Zone 2: Bass",
+        "# Zone 3: Low Mids",
+        "# Zone 4: High Mids",
+        "# Zone 5: Highs / Presence",
+    };
     for (int z = 0; z < 5; ++z) {
+        const FreqZone &fz = cfg.zones[z];
         const QString p = QString("zone%1_").arg(z + 1);
-        out << p << "min_hz = " << qRound(cfg.zones[z].minHz) << "\n"
-            << p << "max_hz = " << qRound(cfg.zones[z].maxHz) << "\n"
-            << p << "share = " << QString::number(cfg.zones[z].share, 'f', 1) << "\n"
-            << p << "gain = " << QString::number(cfg.zones[z].gain, 'f', 2) << "\n"
-            << p << "influence = " << QString::number(cfg.zones[z].influence, 'f', 2) << "\n"
-            << p << "sensitivity = " << QString::number(cfg.zones[z].sensitivity, 'f', 2) << "\n";
+        out << kZoneComments[z] << "\n"
+            << p << "min_hz = " << qRound(fz.minHz) << "\n"
+            << p << "max_hz = " << qRound(fz.maxHz) << "\n"
+            << p << "share = " << QString::number(fz.share, 'f', 1) << "\n"
+            << p << "gain = " << QString::number(fz.gain, 'f', 2) << "\n"
+            << p << "influence = " << QString::number(fz.influence, 'f', 2) << "\n"
+            << p << "sensitivity = " << QString::number(fz.sensitivity, 'f', 2) << "\n";
     }
-    out << "\n[visual]\nrays_per_wing = " << cfg.raysPerWing
-        << "\nmax_length = " << QString::number(cfg.maxLength, 'f', 3) << "\n";
+    out << "\n";
+
+    out << "[visual]\n"
+        << "rays_per_wing = " << cfg.raysPerWing << "\n"
+        << "base_radius = " << QString::number(cfg.baseRadius, 'f', 3) << "\n"
+        << "max_length = " << QString::number(cfg.maxLength, 'f', 3) << "\n"
+        << "ray_width_px = " << QString::number(cfg.rayWidthPx, 'f', 1) << "\n"
+        << "ring_opacity = " << QString::number(cfg.ringOpacity, 'f', 2) << "\n"
+        << "tip_glow = " << QString::number(cfg.tipGlow, 'f', 2) << "\n\n";
+
+    const IniMap rawIni = readIniRaw(configFilePath());
+    out << "[colors]\n"
+        << "mode = " << cfg.colorMode << "\n"
+        << "bg_color = " << iniStr(rawIni, "colors", "bg_color", "#131318") << "\n"
+        << "border_color = " << iniStr(rawIni, "colors", "border_color", "#bfc2ff") << "\n"
+        << "ring_color = " << iniStr(rawIni, "colors", "ring_color", "#bfc2ff") << "\n"
+        << "ray_inner_color = " << iniStr(rawIni, "colors", "ray_inner_color", "#858ae3") << "\n"
+        << "ray_mid_color = " << iniStr(rawIni, "colors", "ray_mid_color", "#bfc2ff") << "\n"
+        << "ray_outer_color = " << iniStr(rawIni, "colors", "ray_outer_color", "#f2f2ff") << "\n";
+
     out.flush();
     return file.commit();
 }
@@ -264,6 +400,9 @@ std::array<int, 5> computeZoneRayCounts(const RadialConfig &cfg) {
 }
 
 QString formatZonesSummary(const RadialConfig &cfg) {
+    if (!cfg.zonesEnabled) {
+        return QString("Single log span %1–%2 Hz (%3 rays/wing)").arg(cfg.lowerCutoffHz).arg(cfg.higherCutoffHz).arg(cfg.raysPerWing);
+    }
     const auto counts = computeZoneRayCounts(cfg);
     QStringList parts;
     for (int z = 0; z < 5; ++z) {

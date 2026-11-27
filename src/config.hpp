@@ -8,10 +8,10 @@
 struct FreqZone {
     float minHz = 20.0f;
     float maxHz = 100.0f;
-    float share = 20.0f;
-    float gain = 1.0f;
-    float influence = 0.55f;
-    float sensitivity = 0.55f;
+    float share = 20.0f;       // Relative ray allocation weight across the 5 zones
+    float gain = 1.0f;         // Per-zone height/amplitude multiplier
+    float influence = 0.55f;   // 0.0 = global loudness floor, 1.0 = zone-local loudness floor
+    float sensitivity = 0.55f; // <1.0 calms noise/flicker, 1.0 neutral, >1.0 amplifies quiet detail
 };
 
 struct RadialConfig {
@@ -23,12 +23,12 @@ struct RadialConfig {
     float borderOpacity = 0.16f;
     bool hoverHint = true;
 
-    QString mirrorMode = "exact";
+    QString mirrorMode = "exact"; // "exact" or "stereo"
     QString source = "auto";
     int framerate = 120;
     int lowerCutoffHz = 20;
     int higherCutoffHz = 20000;
-    float tiltDbPerOct = 1.5f;
+    float tiltDbPerOct = 1.50f;
     float dbRange = 44.0f;
     float attackMs = 2.0f;
     float decayMs = 20.0f;
@@ -53,7 +53,7 @@ struct RadialConfig {
     float ringOpacity = 0.22f;
     float tipGlow = 0.75f;
 
-    QString colorMode = "auto";
+    QString colorMode = "auto"; // "auto", "monochrome", "custom"
     QColor bgColor = QColor("#131318");
     QColor borderColor = QColor("#bfc2ff");
     QColor ringColor = QColor("#bfc2ff");
@@ -85,10 +85,13 @@ struct CliOverrides {
     QString colorMode;
 };
 
+QString configDirPath();
 QString configFilePath();
-QString shaderFilePath();
+QString userShaderFilePath();
+QString resolveShaderPath();
 QString matugenThemePath();
 QString kdeGlobalsPath();
+void ensureDefaultConfigExists();
 
 RadialConfig loadRadialConfig(const CliOverrides &cli = {});
 bool saveRadialConfig(const RadialConfig &cfg);
