@@ -10,7 +10,7 @@ constexpr float kPi = 3.14159265358979323846f;
 
 bool zonesEqual(const std::array<FreqZone, 5> &a, const std::array<FreqZone, 5> &b) {
     for (size_t i = 0; i < 5; ++i) {
-        if (std::abs(a[i].minHz - b[i].minHz) > 0.1f || std::abs(a[i].maxHz - b[i].maxHz) > 0.1f || std::abs(a[i].share - b[i].share) > 0.01f || std::abs(a[i].gain - b[i].gain) > 0.005f || std::abs(a[i].influence - b[i].influence) > 0.005f) return false;
+        if (std::abs(a[i].minHz - b[i].minHz) > 0.1f || std::abs(a[i].maxHz - b[i].maxHz) > 0.1f || std::abs(a[i].share - b[i].share) > 0.01f || std::abs(a[i].gain - b[i].gain) > 0.005f || std::abs(a[i].influence - b[i].influence) > 0.005f || std::abs(a[i].sensitivity - b[i].sensitivity) > 0.005f) return false;
     }
     return true;
 }
@@ -346,6 +346,17 @@ void SpectrumFeed::computeBands(const RadialConfig &cfg, float dtSec, std::vecto
         const float infl = cfg.zonesEnabled ? std::clamp(cfg.zones[z].influence, 0.0f, 1.0f) : 0.0f;
         zoneTopDb[z] = m_agcPeakDb * (1.0f - infl) + m_zonePeakDb[z] * infl;
     }
+    auto shapePreGain = [](float db, float botDb, float invRange, float sens) {
+        const float lin = std::clamp((db - botDb) * invRange, 0.0f, 1.0f);
+        if (sens < 1.0f) {
+            const float calm = 1.0f - sens;
+            const float gate = calm * 0.22f;
+            if (lin <= gate) return 0.0f;
+            const float u = std::clamp((lin - gate) / std::max(0.15f, 1.0f - gate), 0.0f, 1.0f);
+            return std::pow(u, 1.0f + calm * 0.65f);
+        }
+        return std::pow(lin, 1.0f / (1.0f + (sens - 1.0f) * 0.85f));
+    };
     m_normLeft.resize(n);
     m_normRight.resize(n);
     const float invRange = 1.0f / std::max(1.0f, cfg.dbRange);
@@ -357,8 +368,9 @@ void SpectrumFeed::computeBands(const RadialConfig &cfg, float dtSec, std::vecto
         const float zg = cfg.zonesEnabled ? (cfg.zones[z].gain * (1.0f - w) + cfg.zones[zb].gain * w) : 1.0f;
         const float topDb = zoneTopDb[z] * (1.0f - w) + zoneTopDb[zb] * w;
         const float botDb = topDb - cfg.dbRange;
-        m_normLeft[i] = std::clamp(std::clamp((m_dbLeft[i] - botDb) * invRange, 0.0f, 1.0f) * zg, 0.0f, 1.0f);
-        m_normRight[i] = std::clamp(std::clamp((m_dbRight[i] - botDb) * invRange, 0.0f, 1.0f) * zg, 0.0f, 1.0f);
+        const float sens = raySensitivity(cfg, i);
+        m_normLeft[i] = std::clamp(shapePreGain(m_dbLeft[i], botDb, invRange, sens) * zg, 0.0f, 1.0f);
+        m_normRight[i] = std::clamp(shapePreGain(m_dbRight[i], botDb, invRange, sens) * zg, 0.0f, 1.0f);
     }
     constexpr float kKer[5] = {0.10f, 0.22f, 0.36f, 0.22f, 0.10f};
     const int totalRing = 2 * n;
@@ -376,4 +388,21 @@ void SpectrumFeed::computeBands(const RadialConfig &cfg, float dtSec, std::vecto
         outLeft[i] = m_normLeft[i] * (1.0f - sm) + blurL * sm;
         outRight[i] = m_normRight[i] * (1.0f - sm) + blurR * sm;
     }
+}
+
+float SpectrumFeed::raySensitivity(const RadialConfig &cfg, int idx) const {
+    if (!cfg.zonesEnabled || idx < 0 || idx >= static_cast<int>(m_bands.size())) {
+        return std::clamp(cfg.sensitivity, 0.10f, 2.00f);
+    }
+    const LogBand &b = m_bands[idx];
+    const float s0 = cfg.zones[std::clamp(b.zoneIdx, 0, 4)].sensitivity;
+    const float s1 = cfg.zones[std::clamp(b.blendZone, 0, 4)].sensitivity;
+    return std::clamp((s0 * (1.0f - b.blendWeight) + s1 * b.blendWeight) * cfg.sensitivity, 0.10f, 2.00f);
+}
+
+float SpectrumFeed::rayGainScale(const RadialConfig &cfg, int idx) const {
+    if (!cfg.zonesEnabled || idx < 0 || idx >= static_cast<int>(m_bands.size())) return 1.0f;
+    const LogBand &b = m_bands[idx];
+    return cfg.zones[std::clamp(b.zoneIdx, 0, 4)].gain * (1.0f - b.blendWeight) +
+           cfg.zones[std::clamp(b.blendZone, 0, 4)].gain * b.blendWeight;
 }

@@ -133,7 +133,6 @@ void RadialWidget::updateEnvelopes(float dtSec) {
         m_feed.computeBands(m_cfg, dtSec, m_rawLeft, m_rawRight);
     }
 
-    const float alphaAtk = 1.0f - std::exp(-dtSec / std::max(0.0004f, m_cfg.attackMs * 0.001f));
     const float alphaDec = 1.0f - std::exp(-dtSec / std::max(0.001f, m_cfg.decayMs * 0.001f));
     const float tSec = static_cast<float>(m_clock.elapsed()) * 0.001f;
 
@@ -153,8 +152,23 @@ void RadialWidget::updateEnvelopes(float dtSec) {
         }
         const float tgtL = std::clamp(std::pow(std::clamp(rawL * m_cfg.gain, 0.0f, 1.0f), m_cfg.gamma), 0.0f, 1.0f);
         const float tgtR = std::clamp(std::pow(std::clamp(rawR * m_cfg.gain, 0.0f, 1.0f), m_cfg.gamma), 0.0f, 1.0f);
-        m_envLeft[i] += (tgtL - m_envLeft[i]) * ((tgtL > m_envLeft[i]) ? alphaAtk : alphaDec);
-        m_envRight[i] += (tgtR - m_envRight[i]) * ((tgtR > m_envRight[i]) ? alphaAtk : alphaDec);
+        const float sens = m_cli.demo ? std::clamp(m_cfg.sensitivity, 0.10f, 2.00f) : m_feed.raySensitivity(m_cfg, i);
+        const float zgScale = m_cli.demo ? 1.0f : std::max(0.10f, m_feed.rayGainScale(m_cfg, i));
+        const float calm = std::max(0.0f, 1.0f - sens);
+        const float effAtkMs = (sens < 1.0f) ? (m_cfg.attackMs * (1.0f + 2.5f * calm)) : (m_cfg.attackMs / sens);
+        const float alphaAtk = 1.0f - std::exp(-dtSec / std::max(0.0004f, effAtkMs * 0.001f));
+        auto stepCh = [&](float tgt, float &env) {
+            float rate = (tgt > env) ? alphaAtk : alphaDec;
+            if (calm > 0.001f) {
+                const float dead = 0.18f * calm;
+                const float relD = std::abs(tgt - env) / zgScale;
+                if (relD < dead) rate *= 0.12f + 0.88f * std::pow(std::clamp(relD / std::max(0.01f, dead), 0.0f, 1.0f), 1.5f);
+            }
+            env += (tgt - env) * rate;
+            if (env < 0.0005f) env = 0.0f;
+        };
+        stepCh(tgtL, m_envLeft[i]);
+        stepCh(tgtR, m_envRight[i]);
     }
 }
 
@@ -302,6 +316,17 @@ void RadialWidget::adjustZoneOrGlobalGain(float delta) {
         showToast(QString("Global gain: %1x").arg(m_cfg.gain, 0, 'f', 2));
     }
 }
+void RadialWidget::adjustZoneOrGlobalSensitivity(float delta) {
+    if (m_selectedZone >= 0 && m_selectedZone < 5) {
+        FreqZone &fz = m_cfg.zones[m_selectedZone];
+        fz.sensitivity = std::clamp(fz.sensitivity + delta, 0.10f, 2.00f);
+        showToast(QString("Z%1 sensitivity: %2").arg(m_selectedZone + 1).arg(fz.sensitivity, 0, 'f', 2));
+    } else {
+        m_cfg.sensitivity = std::clamp(m_cfg.sensitivity + delta, 0.10f, 2.00f);
+        showToast(QString("Global sensitivity: %1").arg(m_cfg.sensitivity, 0, 'f', 2));
+    }
+}
+
 void RadialWidget::adjustZoneInfluence(float delta) {
     if (m_selectedZone >= 0 && m_selectedZone < 5) {
         FreqZone &fz = m_cfg.zones[m_selectedZone];
@@ -335,8 +360,8 @@ void RadialWidget::keyPressEvent(QKeyEvent *event) {
     case Qt::Key_Period: case Qt::Key_Greater: adjustZoneInfluence(0.10f); return;
     case Qt::Key_BracketRight: m_cfg.decayMs = std::clamp(m_cfg.decayMs + 1.0f, 2.0f, 100.0f); showToast(QString("Decay: %1 ms").arg(m_cfg.decayMs, 0, 'f', 0)); return;
     case Qt::Key_BracketLeft: m_cfg.decayMs = std::clamp(m_cfg.decayMs - 1.0f, 2.0f, 100.0f); showToast(QString("Decay: %1 ms").arg(m_cfg.decayMs, 0, 'f', 0)); return;
-    case Qt::Key_Right: m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing + 8, 24, 200); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
-    case Qt::Key_Left: m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing - 8, 24, 200); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
+    case Qt::Key_Right: if (shift) { adjustZoneOrGlobalSensitivity(0.05f); return; } m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing + 8, 24, 200); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
+    case Qt::Key_Left: if (shift) { adjustZoneOrGlobalSensitivity(-0.05f); return; } m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing - 8, 24, 200); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
     case Qt::Key_M: m_cfg.mirrorMode = (m_cfg.mirrorMode == "exact") ? "stereo" : "exact"; if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Wing mirror: %1").arg(m_cfg.mirrorMode)); return;
     case Qt::Key_C: m_cli.colorMode = (m_cfg.colorMode == "monochrome") ? "auto" : "monochrome"; reloadAll(); return;
     case Qt::Key_Z: showToast(formatZonesSummary(m_cfg)); return;

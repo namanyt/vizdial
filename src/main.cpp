@@ -25,6 +25,8 @@ int main(int argc, char *argv[]) {
             cli.demo = true;
         } else if (a == "--zones") {
             cli.printZones = true;
+        } else if (a == "--sens" && i + 1 < argc) {
+            cli.sensitivity = QString::fromLocal8Bit(argv[++i]).toFloat();
         } else if (a == "--bars" && i + 1 < argc) {
             cli.bars = QString::fromLocal8Bit(argv[++i]).toInt();
         } else if (a == "--source" && i + 1 < argc) {

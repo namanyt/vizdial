@@ -17,6 +17,8 @@ public:
     void configure(const RadialConfig &cfg);
     void stop();
     void computeBands(const RadialConfig &cfg, float dtSec, std::vector<float> &outLeft, std::vector<float> &outRight);
+    float raySensitivity(const RadialConfig &cfg, int idx) const;
+    float rayGainScale(const RadialConfig &cfg, int idx) const;
 
 private:
     struct LogBand {

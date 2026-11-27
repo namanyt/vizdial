@@ -49,6 +49,7 @@ private:
     void toggleFullscreen();
     void adjustHeight(float delta);
     void adjustZoneOrGlobalGain(float delta);
+    void adjustZoneOrGlobalSensitivity(float delta);
     void adjustZoneInfluence(float delta);
 
     CliOverrides m_cli;

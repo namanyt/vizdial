@@ -11,6 +11,7 @@ struct FreqZone {
     float share = 20.0f;
     float gain = 1.0f;
     float influence = 0.55f;
+    float sensitivity = 0.55f;
 };
 
 struct RadialConfig {
@@ -33,15 +34,16 @@ struct RadialConfig {
     float decayMs = 20.0f;
     float gain = 1.05f;
     float gamma = 0.90f;
+    float sensitivity = 1.00f;
 
     bool zonesEnabled = true;
     float zoneBlendRays = 10.0f;
     std::array<FreqZone, 5> zones{{
-        {20.0f, 100.0f, 24.0f, 0.90f, 1.00f},
-        {100.0f, 250.0f, 24.0f, 0.45f, 0.55f},
-        {250.0f, 1000.0f, 22.0f, 0.25f, 0.55f},
-        {1000.0f, 6000.0f, 20.0f, 0.15f, 0.55f},
-        {6000.0f, 20000.0f, 16.0f, 0.10f, 0.55f},
+        {20.0f, 100.0f, 24.0f, 0.90f, 1.00f, 0.55f},
+        {100.0f, 250.0f, 24.0f, 0.45f, 0.55f, 0.45f},
+        {250.0f, 1000.0f, 22.0f, 0.25f, 0.55f, 0.45f},
+        {1000.0f, 6000.0f, 20.0f, 0.15f, 0.55f, 0.35f},
+        {6000.0f, 20000.0f, 16.0f, 0.10f, 0.55f, 0.20f},
     }};
 
     int raysPerWing = 224;
@@ -75,6 +77,7 @@ struct CliOverrides {
     int highHz = -1;
     float decayMs = -1.0f;
     float gain = -1.0f;
+    float sensitivity = -1.0f;
     int width = -1;
     int height = -1;
     QString mirrorMode;

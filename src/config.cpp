@@ -127,6 +127,7 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
     cfg.decayMs = std::clamp(iniFloat(ini, "audio", "decay_ms", cfg.decayMs), 2.0f, 250.0f);
     cfg.gain = std::clamp(iniFloat(ini, "audio", "gain", cfg.gain), 0.2f, 5.0f);
     cfg.gamma = std::clamp(iniFloat(ini, "audio", "gamma", cfg.gamma), 0.35f, 2.5f);
+    cfg.sensitivity = std::clamp(iniFloat(ini, "audio", "sensitivity", cfg.sensitivity), 0.10f, 2.00f);
 
     cfg.zonesEnabled = iniBool(ini, "zones", "enabled", cfg.zonesEnabled);
     cfg.zoneBlendRays = std::clamp(iniFloat(ini, "zones", "zone_blend_rays", cfg.zoneBlendRays), 0.0f, 16.0f);
@@ -138,6 +139,7 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
         fz.share = std::clamp(iniFloat(ini, "zones", prefix + "share", fz.share), 0.0f, 1000.0f);
         fz.gain = std::clamp(iniFloat(ini, "zones", prefix + "gain", fz.gain), 0.1f, 4.0f);
         fz.influence = std::clamp(iniFloat(ini, "zones", prefix + "influence", fz.influence), 0.0f, 1.0f);
+        fz.sensitivity = std::clamp(iniFloat(ini, "zones", prefix + "sensitivity", fz.sensitivity), 0.10f, 2.00f);
     }
 
     cfg.raysPerWing = std::clamp(iniInt(ini, "visual", "rays_per_wing", cfg.raysPerWing), 16, 256);
@@ -172,6 +174,7 @@ RadialConfig loadRadialConfig(const CliOverrides &cli) {
     if (cfg.higherCutoffHz <= cfg.lowerCutoffHz * 2) cfg.higherCutoffHz = cfg.lowerCutoffHz * 2;
     if (cli.decayMs > 0.0f) cfg.decayMs = std::clamp(cli.decayMs, 2.0f, 250.0f);
     if (cli.gain > 0.0f) cfg.gain = std::clamp(cli.gain, 0.2f, 5.0f);
+    if (cli.sensitivity > 0.0f) cfg.sensitivity = std::clamp(cli.sensitivity, 0.10f, 2.00f);
     if (cli.width > 0) cfg.width = std::clamp(cli.width, 320, 2800);
     if (cli.height > 0) cfg.height = std::clamp(cli.height, 320, 2000);
 
@@ -210,7 +213,8 @@ bool saveRadialConfig(const RadialConfig &cfg) {
             << p << "max_hz = " << qRound(cfg.zones[z].maxHz) << "\n"
             << p << "share = " << QString::number(cfg.zones[z].share, 'f', 1) << "\n"
             << p << "gain = " << QString::number(cfg.zones[z].gain, 'f', 2) << "\n"
-            << p << "influence = " << QString::number(cfg.zones[z].influence, 'f', 2) << "\n";
+            << p << "influence = " << QString::number(cfg.zones[z].influence, 'f', 2) << "\n"
+            << p << "sensitivity = " << QString::number(cfg.zones[z].sensitivity, 'f', 2) << "\n";
     }
     out << "\n[visual]\nrays_per_wing = " << cfg.raysPerWing
         << "\nmax_length = " << QString::number(cfg.maxLength, 'f', 3) << "\n";
