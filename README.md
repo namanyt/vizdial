@@ -2,6 +2,25 @@
 
 A frosted, 120 FPS OpenGL radial audio visualizer with a 5-zone logarithmic dual-window FFTW3F engine and PipeWire/PulseAudio monitor capture.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Vizdial live demo over blurred desktop" width="540" />
+</p>
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="assets/preview.png" alt="Vizdial auto KDE and Matugen theme" width="420" /><br />
+      <sub><b>Auto Theme</b> (KDE Accent / Matugen + KWin frosted blur)</sub>
+    </td>
+    <td align="center">
+      <img src="assets/monochrome.png" alt="Vizdial monochrome palette" width="420" /><br />
+      <sub><b>Monochrome</b> (<code>--monochrome</code> / key <code>C</code>)</sub>
+    </td>
+  </tr>
+</table>
+
 ## Highlights
 
 - **Symmetric 180-deg Wing Layout:** Left wing maps bass-up to treble-down (`12 -> 6` o'clock); right wing is mirrored and rotated 180 deg (`6 -> 12` o'clock) to form a balanced closed ring with no pulsing inner radius.
