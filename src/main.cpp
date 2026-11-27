@@ -2,6 +2,7 @@
 #include "radial_widget.hpp"
 
 #include <QApplication>
+#include <QStyleFactory>
 #include <QSurfaceFormat>
 #include <iostream>
 
@@ -54,6 +55,9 @@ int main(int argc, char *argv[]) {
 
     QApplication app(argc, argv);
     app.setApplicationName("vizdial");
+    if (QStyle *fusion = QStyleFactory::create(QStringLiteral("Fusion"))) {
+        app.setStyle(fusion);
+    }
 
     RadialWidget win(cli);
     win.show();

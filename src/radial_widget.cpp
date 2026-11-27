@@ -11,7 +11,6 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QPainter>
-#include <QPainterPath>
 #include <QWindow>
 #include <algorithm>
 #include <cmath>
@@ -48,6 +47,7 @@ RadialWidget::RadialWidget(const CliOverrides &cli, QWidget *parent)
     setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
+    setProperty("_kde_no_window_blur", true);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
@@ -246,22 +246,39 @@ void RadialWidget::paintGL() {
 void RadialWidget::applyBlurRegion() {
     if (!windowHandle()) return;
     QRegion reg;
-    if (isFullScreen() || m_cfg.cornerRadius < 1.0f) {
+    const int w = width();
+    const int h = height();
+    if (isFullScreen() || m_cfg.cornerRadius < 1.0f || w <= 4 || h <= 4) {
         reg = QRegion(rect());
     } else {
-        QPainterPath path;
-        const qreal r = static_cast<qreal>(m_cfg.cornerRadius);
-        path.addRoundedRect(QRectF(1.0, 1.0, std::max(2.0, width() - 2.0), std::max(2.0, height() - 2.0)), r, r);
-        for (const QPolygonF &poly : path.toSubpathPolygons()) {
-            reg += QRegion(poly.toPolygon());
+        constexpr int inset = 1;
+        const int innerW = w - 2 * inset;
+        const int innerH = h - 2 * inset;
+        const qreal maxR = 0.5 * static_cast<qreal>(std::min(innerW, innerH));
+        const qreal r = std::clamp(static_cast<qreal>(m_cfg.cornerRadius), 1.0, maxR);
+        const int ri = std::clamp(static_cast<int>(std::ceil(r)), 1, std::min(innerW, innerH) / 2);
+        for (int row = 0; row < ri; ++row) {
+            const qreal dy = std::max(0.0, r - static_cast<qreal>(row));
+            const qreal dx = std::sqrt(std::max(0.0, r * r - dy * dy));
+            const int xInset = inset + static_cast<int>(std::ceil(std::max(0.0, r - dx)));
+            const int spanW = w - 2 * xInset;
+            if (spanW <= 0) continue;
+            const int yTop = inset + row;
+            const int yBot = h - 1 - (inset + row);
+            reg += QRect(xInset, yTop, spanW, 1);
+            if (yBot > yTop) reg += QRect(xInset, yBot, spanW, 1);
         }
+        const int midH = h - 2 * (inset + ri);
+        if (midH > 0) reg += QRect(inset, inset + ri, innerW, midH);
     }
     KWindowEffects::enableBlurBehind(windowHandle(), true, reg);
+    KWindowEffects::enableBackgroundContrast(windowHandle(), true, 1.06, 1.0, 1.12, reg);
 }
 
 void RadialWidget::showEvent(QShowEvent *event) {
     QOpenGLWidget::showEvent(event);
     applyBlurRegion();
+    QTimer::singleShot(0, this, &RadialWidget::applyBlurRegion);
 }
 
 void RadialWidget::resizeEvent(QResizeEvent *event) {
@@ -360,8 +377,8 @@ void RadialWidget::keyPressEvent(QKeyEvent *event) {
     case Qt::Key_Period: case Qt::Key_Greater: adjustZoneInfluence(0.10f); return;
     case Qt::Key_BracketRight: m_cfg.decayMs = std::clamp(m_cfg.decayMs + 1.0f, 2.0f, 100.0f); showToast(QString("Decay: %1 ms").arg(m_cfg.decayMs, 0, 'f', 0)); return;
     case Qt::Key_BracketLeft: m_cfg.decayMs = std::clamp(m_cfg.decayMs - 1.0f, 2.0f, 100.0f); showToast(QString("Decay: %1 ms").arg(m_cfg.decayMs, 0, 'f', 0)); return;
-    case Qt::Key_Right: if (shift) { adjustZoneOrGlobalSensitivity(0.05f); return; } m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing + 8, 24, 200); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
-    case Qt::Key_Left: if (shift) { adjustZoneOrGlobalSensitivity(-0.05f); return; } m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing - 8, 24, 200); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
+    case Qt::Key_Right: if (shift) { adjustZoneOrGlobalSensitivity(0.05f); return; } m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing + 8, 24, 256); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
+    case Qt::Key_Left: if (shift) { adjustZoneOrGlobalSensitivity(-0.05f); return; } m_cfg.raysPerWing = std::clamp(m_cfg.raysPerWing - 8, 24, 256); if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Rays: %1").arg(m_cfg.raysPerWing * 2)); return;
     case Qt::Key_M: m_cfg.mirrorMode = (m_cfg.mirrorMode == "exact") ? "stereo" : "exact"; if (!m_cli.demo) m_feed.configure(m_cfg); showToast(QString("Wing mirror: %1").arg(m_cfg.mirrorMode)); return;
     case Qt::Key_C: m_cli.colorMode = (m_cfg.colorMode == "monochrome") ? "auto" : "monochrome"; reloadAll(); return;
     case Qt::Key_Z: showToast(formatZonesSummary(m_cfg)); return;
