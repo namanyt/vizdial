@@ -59,7 +59,19 @@ Or install system-wide:
 sudo cmake --install build
 ```
 
-For Arch packaging, see `packaging/arch/PKGBUILD`.
+### Arch Linux Package
+
+Install the prebuilt release package with `pacman`:
+
+```bash
+sudo pacman -U https://github.com/namanyt/vizdial/releases/download/v0.1.0/vizdial-0.1.0-1-x86_64.pkg.tar.zst
+```
+
+Or build from source with [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD):
+
+```bash
+git clone https://github.com/namanyt/vizdial && cd vizdial/packaging/arch && makepkg -si
+```
 
 ## Usage & CLI Flags
 
